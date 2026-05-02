@@ -41,8 +41,12 @@ describe("Claude tool adapter", () => {
     const settings = makeSettings({
       agentPool: {
         primaryAgent: undefined,
+        primaryCandidates: [],
         primaryFallbackRoles: ["maestro"],
         onPrimaryUnavailable: "reassign",
+        aiReviewState: "AI Review",
+        aiReviewCapabilities: ["review"],
+        aiReviewPreferDifferentHarness: true,
         members: [
         {
           id: "codex-gpt-5.4-soloist",
@@ -222,8 +226,12 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     },
     agentPool: {
       primaryAgent: undefined,
+      primaryCandidates: [],
       primaryFallbackRoles: ["maestro"],
       onPrimaryUnavailable: "reassign",
+      aiReviewState: "AI Review",
+      aiReviewCapabilities: ["review"],
+      aiReviewPreferDifferentHarness: true,
       members: [],
     },
     ...overrides,

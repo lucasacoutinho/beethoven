@@ -17,7 +17,7 @@ const TrackerSchema = Schema.Struct({
   api_key: Schema.optional(Schema.String),
   project_slug: Schema.String,
   active_states: Schema.optionalWith(Schema.Array(Schema.String), {
-    default: () => ["Todo", "In Progress"] as const,
+    default: () => ["Todo", "In Progress", "AI Review"] as const,
   }),
   terminal_states: Schema.optionalWith(Schema.Array(Schema.String), {
     default: () =>
@@ -158,6 +158,17 @@ const AgentPoolMemberSchema = Schema.Struct({
 
 const AgentPoolSchema = Schema.Struct({
   primary_agent: Schema.optional(Schema.String),
+  primary_candidates: Schema.optionalWith(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        weight: Schema.optionalWith(Schema.Number.pipe(Schema.positive()), {
+          default: () => 1,
+        }),
+      }),
+    ),
+    { default: () => [] as const },
+  ),
   primary_fallback_roles: Schema.optionalWith(
     Schema.Array(Schema.Literal("maestro", "soloist", "accompanist")),
     { default: () => ["maestro"] as const },
@@ -166,6 +177,15 @@ const AgentPoolSchema = Schema.Struct({
     Schema.Literal("reassign", "pause", "fail"),
     { default: () => "reassign" as const },
   ),
+  ai_review_state: Schema.optionalWith(Schema.String, {
+    default: () => "AI Review",
+  }),
+  ai_review_capabilities: Schema.optionalWith(Schema.Array(Schema.String), {
+    default: () => ["review"] as const,
+  }),
+  ai_review_prefer_different_harness: Schema.optionalWith(Schema.Boolean, {
+    default: () => true,
+  }),
   members: Schema.optionalWith(Schema.Array(AgentPoolMemberSchema), {
     default: () => [] as const,
   }),
@@ -322,8 +342,15 @@ export interface Settings {
   }
   readonly agentPool: {
     readonly primaryAgent: string | undefined
+    readonly primaryCandidates: ReadonlyArray<{
+      readonly id: string
+      readonly weight: number
+    }>
     readonly primaryFallbackRoles: ReadonlyArray<"maestro" | "soloist" | "accompanist">
     readonly onPrimaryUnavailable: "reassign" | "pause" | "fail"
+    readonly aiReviewState: string
+    readonly aiReviewCapabilities: ReadonlyArray<string>
+    readonly aiReviewPreferDifferentHarness: boolean
     readonly members: ReadonlyArray<AgentPoolMemberSettings>
   }
 }
@@ -443,8 +470,13 @@ function resolve(parsed: RawWorkflowConfig, workflowFilePath: string): Settings 
     runtime: runtimeSettings,
     agentPool: {
       primaryAgent: parsed.agent_pool.primary_agent,
+      primaryCandidates: parsed.agent_pool.primary_candidates,
       primaryFallbackRoles: parsed.agent_pool.primary_fallback_roles,
       onPrimaryUnavailable: parsed.agent_pool.on_primary_unavailable,
+      aiReviewState: parsed.agent_pool.ai_review_state,
+      aiReviewCapabilities: parsed.agent_pool.ai_review_capabilities,
+      aiReviewPreferDifferentHarness:
+        parsed.agent_pool.ai_review_prefer_different_harness,
       members: agentPoolMembers,
     },
   }

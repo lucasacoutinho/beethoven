@@ -36,6 +36,11 @@ describe("WORKFLOW.example.md", () => {
     expect(settings.runtime.common.model).toBe("gpt-5.5")
     expect(settings.runtime.common.effort).toBe("xhigh")
     expect(settings.agentPool.primaryAgent).toBe("codex-gpt-5.5-maestro")
+    expect(settings.agentPool.primaryCandidates).toEqual([
+      { id: "codex-gpt-5.5-maestro", weight: 80 },
+      { id: "codex-gpt-5.4-soloist", weight: 20 },
+    ])
+    expect(settings.agentPool.aiReviewState).toBe("AI Review")
     expect(settings.agentPool.members.map((member) => member.id)).toEqual([
       "codex-gpt-5.5-maestro",
       "codex-gpt-5.4-mini-accompanist",

@@ -271,8 +271,12 @@ function makeSettings(
     },
     agentPool: {
       primaryAgent: undefined,
+      primaryCandidates: [],
       primaryFallbackRoles: ["maestro"],
       onPrimaryUnavailable: "reassign",
+      aiReviewState: "AI Review",
+      aiReviewCapabilities: ["review"],
+      aiReviewPreferDifferentHarness: true,
       members: [],
     },
   }

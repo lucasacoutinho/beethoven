@@ -20,7 +20,7 @@ import type { Issue } from "../tracker/issue.ts"
 import { normalizeState } from "../tracker/issue.ts"
 import { LinearClient } from "../tracker/linear-client.ts"
 import { WorkspaceManager, type Workspace } from "../workspace/workspace.ts"
-import { AgentRunner, makeHarness } from "../agent/runner.ts"
+import { makeHarness } from "../agent/runner.ts"
 import type {
   AgentTaskDelegate,
   AgentTaskRequest,
@@ -146,11 +146,9 @@ export const OrchestratorLive = (
     Effect.gen(function* () {
       const tracker = yield* LinearClient
       const workspaces = yield* WorkspaceManager
-      const agent = yield* AgentRunner
 
       const state = yield* Ref.make<State>(initialState())
       const events = yield* PubSub.unbounded<OrchestratorEvent>()
-      const primaryAgent = primaryAgentInfo(settings)
 
       const isActive = (s: string) =>
         settings.tracker.activeStates.some(
@@ -192,15 +190,24 @@ export const OrchestratorLive = (
         return true
       }
 
-      const runIssue = (issue: Issue, attempt: number) =>
+      const runIssue = (
+        issue: Issue,
+        attempt: number,
+        assignedMember: Settings["agentPool"]["members"][number] | undefined,
+      ) =>
         Effect.gen(function* () {
+          const agentSettings = assignedMember
+            ? settingsForTopLevelPoolMember(settings, assignedMember)
+            : settings
+          const issueAgent = agentInfoForSettings(agentSettings, assignedMember)
+          const issueHarness = makeHarness(agentSettings)
           const ws = yield* workspaces.createForIssue(issue)
 
-          const linkResult = yield* workspaces.linkAgentSkills(ws, agent.skillsPath)
+          const linkResult = yield* workspaces.linkAgentSkills(ws, issueHarness.skillsPath)
           yield* Effect.logDebug("skills_link").pipe(
             Effect.annotateLogs({
               issue_identifier: issue.identifier,
-              harness: agent.kind,
+              harness: issueHarness.kind,
               ...linkResult,
             }),
           )
@@ -223,7 +230,7 @@ export const OrchestratorLive = (
                 template: promptTemplate,
                 issue: currentIssue,
                 attempt: turn === 1 ? (attempt > 1 ? attempt : null) : turn,
-                agent: primaryAgent,
+                agent: issueAgent,
               })
               const delegateTask = makeAgentPoolDelegate(
                 settings,
@@ -316,7 +323,7 @@ export const OrchestratorLive = (
                   }
                 })
 
-              const result = yield* agent
+              const result = yield* issueHarness
                 .run(
                   { workspace: ws, issue: currentIssue, prompt, turnNumber: turn, delegateTask },
                   onAgentEvent,
@@ -378,7 +385,12 @@ export const OrchestratorLive = (
 
       const dispatch = (issue: Issue, attempt: number): Effect.Effect<void> =>
         Effect.gen(function* () {
-          const work = runIssue(issue, attempt).pipe(
+          const assignedMember = selectIssueAgentPoolMember(settings, issue)
+          const assignedAgent = agentInfoForSettings(
+            assignedMember ? settingsForTopLevelPoolMember(settings, assignedMember) : settings,
+            assignedMember,
+          )
+          const work = runIssue(issue, attempt, assignedMember).pipe(
             Effect.catchAll((cause) =>
               Effect.logError("dispatch_failed").pipe(
                 Effect.annotateLogs({
@@ -456,7 +468,7 @@ export const OrchestratorLive = (
             claimed: HashSet.add(s.claimed, issue.id),
             running: HashMap.set(s.running, issue.id, {
               issue,
-              agent: primaryAgent,
+              agent: assignedAgent,
               processPid: null,
               startedAt: Date.now(),
               turn: 1,
@@ -635,19 +647,128 @@ function sortForDispatch(issues: ReadonlyArray<Issue>): ReadonlyArray<Issue> {
   })
 }
 
-function primaryAgentInfo(settings: Settings): RunningAgentInfo {
-  const primary = settings.agentPool.primaryAgent
-    ? settings.agentPool.members.find(
-        (member) => member.id === settings.agentPool.primaryAgent,
-      )
-    : undefined
+function agentInfoForSettings(
+  settings: Settings,
+  member: Settings["agentPool"]["members"][number] | undefined,
+): RunningAgentInfo {
   return {
-    id: primary?.id ?? settings.runtime.kind,
-    role: primary?.role ?? null,
-    kind: primary?.kind ?? settings.runtime.kind,
-    model: primary?.model ?? settings.runtime.common.model ?? settings.runtime.kind,
-    effort: primary?.effort ?? settings.runtime.common.effort ?? "default",
+    id: member?.id ?? settings.runtime.kind,
+    role: member?.role ?? null,
+    kind: member?.kind ?? settings.runtime.kind,
+    model: member?.model ?? settings.runtime.common.model ?? settings.runtime.kind,
+    effort: member?.effort ?? settings.runtime.common.effort ?? "default",
   }
+}
+
+function selectIssueAgentPoolMember(
+  settings: Settings,
+  issue: Issue,
+): Settings["agentPool"]["members"][number] | undefined {
+  if (
+    normalizeState(issue.state) ===
+    normalizeState(settings.agentPool.aiReviewState)
+  ) {
+    return selectAiReviewMember(settings)
+  }
+
+  return selectPrimaryMember(settings)
+}
+
+function selectPrimaryMember(
+  settings: Settings,
+): Settings["agentPool"]["members"][number] | undefined {
+  const weighted = settings.agentPool.primaryCandidates
+    .map((entry) => ({
+      member: settings.agentPool.members.find((candidate) => candidate.id === entry.id),
+      weight: entry.weight,
+    }))
+    .filter(
+      (entry): entry is {
+        readonly member: Settings["agentPool"]["members"][number]
+        readonly weight: number
+      } => entry.member !== undefined && entry.weight > 0,
+    )
+
+  if (weighted.length > 0) {
+    return weightedRandom(weighted)
+  }
+
+  if (settings.agentPool.primaryAgent) {
+    return settings.agentPool.members.find(
+      (candidate) => candidate.id === settings.agentPool.primaryAgent,
+    )
+  }
+
+  return undefined
+}
+
+function selectAiReviewMember(
+  settings: Settings,
+): Settings["agentPool"]["members"][number] | undefined {
+  const primary = selectPrimaryReferenceMember(settings)
+  const requestedCapabilities = settings.agentPool.aiReviewCapabilities
+  const reviewers = settings.agentPool.members.filter((candidate) =>
+    requestedCapabilities.every((capability) =>
+      candidate.capabilities.includes(capability),
+    ),
+  )
+
+  if (reviewers.length === 0) return selectPrimaryMember(settings)
+
+  const notPrimary = primary
+    ? reviewers.filter((candidate) => candidate.id !== primary.id)
+    : reviewers
+  const pool = notPrimary.length > 0 ? notPrimary : reviewers
+
+  if (settings.agentPool.aiReviewPreferDifferentHarness && primary) {
+    const differentHarness = pool.filter(
+      (candidate) => candidate.kind !== primary.kind,
+    )
+    if (differentHarness.length > 0) return randomMember(differentHarness)
+  }
+
+  if (primary) {
+    const differentModel = pool.filter(
+      (candidate) => candidate.model !== primary.model,
+    )
+    if (differentModel.length > 0) return randomMember(differentModel)
+  }
+
+  return randomMember(pool)
+}
+
+function selectPrimaryReferenceMember(
+  settings: Settings,
+): Settings["agentPool"]["members"][number] | undefined {
+  if (settings.agentPool.primaryAgent) {
+    const primary = settings.agentPool.members.find(
+      (candidate) => candidate.id === settings.agentPool.primaryAgent,
+    )
+    if (primary) return primary
+  }
+  const firstCandidate = settings.agentPool.primaryCandidates[0]
+  return firstCandidate
+    ? settings.agentPool.members.find((candidate) => candidate.id === firstCandidate.id)
+    : undefined
+}
+
+function weightedRandom(
+  entries: ReadonlyArray<{
+    readonly member: Settings["agentPool"]["members"][number]
+    readonly weight: number
+  }>,
+): Settings["agentPool"]["members"][number] {
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0)
+  let target = Math.random() * total
+  for (const entry of entries) {
+    target -= entry.weight
+    if (target <= 0) return entry.member
+  }
+  return entries[entries.length - 1]!.member
+}
+
+function randomMember<T>(members: ReadonlyArray<T>): T {
+  return members[Math.floor(Math.random() * members.length)]!
 }
 
 function makeAgentPoolDelegate(
@@ -739,6 +860,17 @@ function settingsForPoolMember(
       ...settings.agentPool,
       members: [],
     },
+  }
+}
+
+function settingsForTopLevelPoolMember(
+  settings: Settings,
+  member: Settings["agentPool"]["members"][number],
+): Settings {
+  const memberSettings = settingsForPoolMember(settings, member)
+  return {
+    ...memberSettings,
+    agentPool: settings.agentPool,
   }
 }
 

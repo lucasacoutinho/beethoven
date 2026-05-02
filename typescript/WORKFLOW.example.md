@@ -6,6 +6,7 @@ tracker:
   active_states:
     - Todo
     - In Progress
+    - AI Review
     - Merging
     - Rework
   terminal_states:
@@ -76,8 +77,19 @@ agent_pool:
   # Optional. When set, this pool member owns top-level issue runs instead of
   # the legacy runtime block above.
   primary_agent: codex-gpt-5.5-maestro
+  # Optional weighted top-level assignment. When present, Beethoven picks one
+  # candidate per issue dispatch. Use this to exercise secondary maestros
+  # before the primary is unavailable.
+  primary_candidates:
+    - id: codex-gpt-5.5-maestro
+      weight: 80
+    - id: codex-gpt-5.4-soloist
+      weight: 20
   primary_fallback_roles: [maestro]
   on_primary_unavailable: reassign # reassign | pause | fail
+  ai_review_state: AI Review
+  ai_review_capabilities: [review]
+  ai_review_prefer_different_harness: true
   members:
     - id: codex-gpt-5.5-maestro
       role: maestro
@@ -159,7 +171,8 @@ No description was provided.
   - If a PR is already attached, treat the run as a PR feedback/rework loop before doing new feature work.
 - `In Progress`: continue from the current workpad and workspace state.
 - `Rework`: gather review feedback, update the workpad checklist, implement changes, and revalidate.
-- `Human Review`: do not make speculative changes. Check for new review feedback; otherwise stop.
+- `AI Review`: run adversarial review with a different harness when available, otherwise a different model or reasoning effort. If checks/review pass and no human-only decision remains, move directly to `Merging`. If changes are needed, move to `Rework` with specific notes.
+- `Human Review`: only for true human-only decisions. Do not use it for routine AI-reviewable PR approval.
 - `Merging`: follow the repository's documented landing flow. Do not merge directly unless the workflow explicitly says to.
 - Terminal states: do nothing.
 
@@ -236,7 +249,7 @@ Update the workpad before implementation, after meaningful discoveries, after va
    - no broken docs or examples.
 7. Commit and push only when that is part of this repository's workflow.
 8. Attach or link the PR to the issue when a PR is created and apply the external visibility labels to the PR.
-9. Move the issue to the next state only when the completion bar is met.
+9. Move the issue to `AI Review` only when the completion bar is met.
 
 ## Pull Request Feedback
 
@@ -260,14 +273,16 @@ Use this only when completion is blocked by missing required tools, auth, permis
   - exact human action needed to unblock.
 - Keep blocker notes concise and put them in the workpad rather than scattering new comments.
 
-## Step 3: Human Review And Merge Handling
+## Step 3: AI Review, Human Review, And Merge Handling
 
-1. In `Human Review`, do not code speculatively.
-2. Poll for new PR review feedback if the harness is configured to watch that state.
-3. If feedback requires changes, move or leave the issue in `Rework` and follow the rework flow.
-4. If approved, wait for the issue to enter `Merging` or follow the repository's documented merge gate.
-5. In `Merging`, follow the repository's landing instructions exactly. Do not bypass required checks or review gates.
-6. After merge is complete, move the issue to a terminal state only when the repository and tracker agree the work is done.
+1. In `AI Review`, read the workpad, diff, PR comments, and checks from scratch. Assume the implementation may be wrong until evidence says otherwise.
+2. Prefer review by a different harness. If only one harness is available, use a different model or reasoning effort from the implementer.
+3. If review finds required changes, move the issue to `Rework` and record exact findings in the workpad or PR.
+4. If review passes and no human-only decision remains, move the issue directly to `Merging`.
+5. Move to `Human Review` only for decisions requiring human product, legal, secret, permission, or business judgment.
+6. In `Human Review`, do not code speculatively. Poll for explicit human decision or review feedback.
+7. In `Merging`, follow the repository's landing instructions exactly. Do not bypass required checks or review gates.
+8. After merge is complete, move the issue to a terminal state only when the repository and tracker agree the work is done.
 
 ## Step 4: Rework Handling
 
