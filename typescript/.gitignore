@@ -1,0 +1,12 @@
+node_modules/
+dist/
+log/
+*.log
+.DS_Store
+.env
+.env.*
+.env.local
+WORKFLOW.md
+WORKFLOW.local.md
+!WORKFLOW.example.md
+!WORKFLOW.md.example

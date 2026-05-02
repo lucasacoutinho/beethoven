@@ -1,0 +1,6 @@
+[install]
+exact = false
+cache = true
+
+[run]
+silent = false
