@@ -11,8 +11,8 @@ import type { Settings } from "../../config/schema.ts"
 const fakeCodexServer = `#!/usr/bin/env bun
 import { appendFileSync } from "node:fs"
 
-const trace = process.env.BETHOVEEN_CODEX_TRACE
-const scenario = process.env.BETHOVEEN_CODEX_SCENARIO || "complete"
+const trace = process.env.BEETHOVEN_CODEX_TRACE
+const scenario = process.env.BEETHOVEN_CODEX_SCENARIO || "complete"
 const decoder = new TextDecoder()
 let buffer = ""
 
@@ -93,8 +93,8 @@ describe("Codex harness", () => {
     expect(findRequest(requests, "initialize")?.params).toEqual({
       capabilities: { experimentalApi: true },
       clientInfo: {
-        name: "bethoveen-orchestrator",
-        title: "Bethoveen Orchestrator",
+        name: "beethoven-orchestrator",
+        title: "Beethoven Orchestrator",
         version: "0.1.0",
       },
     })
@@ -143,7 +143,7 @@ describe("Codex harness", () => {
     const toolReply = requests.find((request) => request.id === "tool-1")
     expect(toolReply?.result).toMatchObject({ success: false })
     expect(String((toolReply?.result as Record<string, unknown>).output)).toContain(
-      "Bethoveen is missing Linear auth",
+      "Beethoven is missing Linear auth",
     )
     expect(events.some((event) => event._tag === "tool_result" && event.isError)).toBe(true)
   }, 10_000)
@@ -157,7 +157,7 @@ async function runCodexScenario(
   readonly requests: ReadonlyArray<Record<string, unknown>>
   readonly events: ReadonlyArray<AgentEvent>
 }> {
-  const root = await mkdtemp(join(tmpdir(), "bethoveen-codex-test-"))
+  const root = await mkdtemp(join(tmpdir(), "beethoven-codex-test-"))
   try {
     const workspace = join(root, "workspace")
     const tracePath = join(root, "trace.jsonl")
@@ -170,8 +170,8 @@ async function runCodexScenario(
       ...codexOverrides,
       command: `${shellQuote(serverPath)} app-server`,
     }, {
-      BETHOVEEN_CODEX_TRACE: tracePath,
-      BETHOVEEN_CODEX_SCENARIO: scenario,
+      BEETHOVEN_CODEX_TRACE: tracePath,
+      BEETHOVEN_CODEX_SCENARIO: scenario,
     })
 
     const events: AgentEvent[] = []

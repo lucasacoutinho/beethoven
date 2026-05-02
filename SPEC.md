@@ -1,8 +1,8 @@
-# Bethoveen Service Specification
+# Beethoven Service Specification
 
 Purpose: Define a service that orchestrates coding agents to get project work done.
 
-Bethoveen is a port of OpenAI's Bethoveen specification with one extension: the
+Beethoven is a port of OpenAI's Symphony specification with one extension: the
 execution layer is **harness-agnostic**. V1 supports four harnesses — `claude`
 (via the Claude Agent SDK / `claude` CLI), `codex` (via `codex app-server`
 JSON-RPC), `gemini` (via the Gemini CLI's headless mode), and `opencode` (via
@@ -21,7 +21,7 @@ behavior.
 
 ## 1. Problem Statement
 
-Bethoveen is a long-running automation service that continuously reads work from an issue tracker
+Beethoven is a long-running automation service that continuously reads work from an issue tracker
 (Linear in this specification version), creates an isolated workspace for each issue, and runs a
 coding agent session for that issue inside the workspace.
 
@@ -41,7 +41,7 @@ stricter approvals or sandboxing.
 
 Important boundary:
 
-- Bethoveen is a scheduler/runner and tracker reader.
+- Beethoven is a scheduler/runner and tracker reader.
 - Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
   using tools available in the workflow/runtime environment.
 - A successful run can end at a workflow-defined handoff state (for example `Human Review`), not
@@ -119,7 +119,7 @@ Important boundary:
 
 ### 3.2 Abstraction Levels
 
-Bethoveen is easiest to port when kept in these layers:
+Beethoven is easiest to port when kept in these layers:
 
 1. `Policy Layer` (repo-defined)
    - `WORKFLOW.md` prompt body.
@@ -382,7 +382,7 @@ Fields:
 Fields:
 
 - `root` (path string or `$VAR`)
-  - Default: `<system-temp>/bethoveen_workspaces`
+  - Default: `<system-temp>/beethoven_workspaces`
   - `~` is expanded.
   - Relative paths are resolved relative to the directory containing `WORKFLOW.md`.
   - The effective workspace root is normalized to an absolute path before use.
@@ -433,7 +433,7 @@ Fields:
 #### 5.3.6 `runtime` (object)
 
 The `runtime` block selects which coding-agent harness drives execution and
-configures it. Bethoveen abstracts harness differences behind a single
+configures it. Beethoven abstracts harness differences behind a single
 interface; this block is the operator-facing surface.
 
 Top-level fields (apply to every harness; individual harnesses MAY ignore
@@ -676,7 +676,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
-- `workspace.root`: path resolved to absolute, default `<system-temp>/bethoveen_workspaces`
+- `workspace.root`: path resolved to absolute, default `<system-temp>/beethoven_workspaces`
 - `hooks.after_create`: shell script or null
 - `hooks.before_run`: shell script or null
 - `hooks.after_run`: shell script or null
@@ -943,7 +943,7 @@ Algorithm summary:
 Each harness expects skill files at its own conventional path
 (`.claude/skills`, `.codex/skills`, `.gemini/skills`). Workflows install
 skills once into a single canonical source-of-truth at `.agents/skills/`
-(workspace-relative); Bethoveen MUST then symlink the active harness's
+(workspace-relative); Beethoven MUST then symlink the active harness's
 expected path to this canonical source so each harness finds its expected
 layout without duplication.
 
@@ -1040,7 +1040,7 @@ Invariant 3: Workspace key is sanitized.
 
 ## 10. Agent Runner Protocol (Coding Agent Integration)
 
-This section defines Bethoveen's language-neutral responsibilities when integrating a Codex
+This section defines Beethoven's language-neutral responsibilities when integrating a Codex
 app-server. The Codex app-server protocol for the targeted Codex version is the source of truth for
 protocol schemas, message payloads, transport framing, and method names.
 
@@ -1051,7 +1051,7 @@ Protocol source of truth:
   instead of treating this specification as a protocol schema.
 - If this specification appears to conflict with the targeted Codex app-server protocol, the Codex
   protocol controls protocol shape and transport behavior.
-- Bethoveen-specific requirements in this section still control orchestration behavior, workspace
+- Beethoven-specific requirements in this section still control orchestration behavior, workspace
   selection, prompt construction, continuation handling, and observability extraction.
 
 ### 10.1 Launch Contract
@@ -1077,7 +1077,7 @@ RECOMMENDED additional process settings:
 
 Reference: https://developers.openai.com/codex/app-server/
 
-Startup MUST follow the targeted Codex app-server contract. Bethoveen additionally requires the
+Startup MUST follow the targeted Codex app-server contract. Beethoven additionally requires the
 client to:
 
 - Start the app-server subprocess in the per-issue workspace.
@@ -1190,7 +1190,7 @@ Optional client-side tool extension:
 
 `linear_graphql` extension contract:
 
-- Purpose: execute a raw GraphQL query or mutation against Linear using Bethoveen's configured
+- Purpose: execute a raw GraphQL query or mutation against Linear using Beethoven's configured
   tracker auth for the current session.
 - Availability: only meaningful when `tracker.kind == "linear"` and valid Linear auth is configured.
 - Preferred input shape:
@@ -1211,7 +1211,7 @@ Optional client-side tool extension:
 - Execute one GraphQL operation per tool call.
 - If the provided document contains multiple operations, reject the tool call as invalid input.
 - `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Linear endpoint and auth from the active Bethoveen workflow/runtime config; do
+- Reuse the configured Linear endpoint and auth from the active Beethoven workflow/runtime config; do
   not require the coding agent to read raw tokens from disk.
 - Tool result semantics:
   - transport success + no top-level GraphQL `errors` -> `success=true`
@@ -1334,7 +1334,7 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Bethoveen does not require first-class tracker write APIs in the orchestrator.
+Beethoven does not require first-class tracker write APIs in the orchestrator.
 
 - Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
   agent using tools defined by the workflow prompt.
@@ -1579,7 +1579,7 @@ Minimum endpoints:
       "issue_id": "abc123",
       "status": "running",
       "workspace": {
-        "path": "/tmp/bethoveen_workspaces/MT-649"
+        "path": "/tmp/beethoven_workspaces/MT-649"
       },
       "attempts": {
         "restart_count": 1,
@@ -1604,7 +1604,7 @@ Minimum endpoints:
         "codex_session_logs": [
           {
             "label": "latest",
-            "path": "/var/log/bethoveen/codex/MT-649/latest.log",
+            "path": "/var/log/beethoven/codex/MT-649/latest.log",
             "url": null
           }
         ]
@@ -2226,7 +2226,7 @@ Use the same validation profiles as Section 17:
 - HTTP server extension honors CLI `--port` over `server.port`, uses a safe default bind host, and
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
-  app-server session using configured Bethoveen auth.
+  app-server session using configured Beethoven auth.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
@@ -2243,7 +2243,7 @@ Use the same validation profiles as Section 17:
 
 ## Appendix A. SSH Worker Extension (OPTIONAL)
 
-This appendix describes a common extension profile in which Bethoveen keeps one central
+This appendix describes a common extension profile in which Beethoven keeps one central
 orchestrator but executes worker runs on one or more remote hosts over SSH.
 
 Extension config:

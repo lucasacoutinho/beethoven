@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "bethoveen",
+      "name": "beethoven",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.126",
         "@effect/platform": "^0.96.1",

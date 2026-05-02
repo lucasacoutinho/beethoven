@@ -29,7 +29,7 @@ export const linearGraphqlTool: ToolImplementation = {
   definition: {
     name: LINEAR_GRAPHQL_TOOL,
     description:
-      "Execute a raw GraphQL query or mutation against Linear using Bethoveen's configured auth.",
+      "Execute a raw GraphQL query or mutation against Linear using Beethoven's configured auth.",
     inputJsonSchema: linearGraphqlInputSchema,
   },
   execute: executeLinearGraphqlTool,
@@ -136,7 +136,7 @@ function toolErrorPayload(reason: unknown): Record<string, unknown> {
     return {
       error: {
         message:
-          "Bethoveen is missing Linear auth. Set `tracker.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
+          "Beethoven is missing Linear auth. Set `tracker.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
       },
     }
   }

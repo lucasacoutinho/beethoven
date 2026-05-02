@@ -1,12 +1,12 @@
-# Bethoveen
+# Beethoven
 
-[![TypeScript checks](https://github.com/usebeacon/bethoveen/actions/workflows/typescript-checks.yml/badge.svg)](https://github.com/usebeacon/bethoveen/actions/workflows/typescript-checks.yml)
+[![TypeScript checks](https://github.com/lucasacoutinho/beethoven/actions/workflows/typescript-checks.yml/badge.svg)](https://github.com/lucasacoutinho/beethoven/actions/workflows/typescript-checks.yml)
 
-Bethoveen turns project work into isolated, autonomous implementation runs,
+Beethoven turns project work into isolated, autonomous implementation runs,
 allowing teams to manage work instead of supervising coding agents — and does
 it across multiple coding-agent harnesses.
 
-Bethoveen is a port of OpenAI's [Symphony](https://github.com/openai/symphony)
+Beethoven is a port of OpenAI's [Symphony](https://github.com/openai/symphony)
 with one extension: the execution layer is **harness-agnostic**. V1 supports
 four harnesses, selected per-workflow via `runtime.kind`:
 
@@ -18,10 +18,10 @@ four harnesses, selected per-workflow via `runtime.kind`:
 | `opencode` | `opencode run --format json` | Stub |
 
 > [!WARNING]
-> Bethoveen is a low-key engineering preview for testing in trusted environments.
+> Beethoven is a low-key engineering preview for testing in trusted environments.
 > See [`STATUS.md`](STATUS.md) for the current support matrix and known gaps.
 
-## Running Bethoveen
+## Running Beethoven
 
 ### Requirements
 
@@ -31,7 +31,7 @@ four harnesses, selected per-workflow via `runtime.kind`:
   - Claude Code + `@anthropic-ai/claude-agent-sdk`, or
   - Codex CLI with `codex app-server`.
 
-Bethoveen works best in codebases that have adopted harness engineering. It
+Beethoven works best in codebases that have adopted harness engineering. It
 picks up where Symphony left off: moving from managing coding agents to
 managing work that needs to get done, while letting the operator pick which
 agent runtime drives the work.
@@ -55,7 +55,7 @@ Additional language ports (Elixir, Go, Python, etc.) can land sibling to
 
 ### Skills layout
 
-Bethoveen workspaces use a single canonical `.agents/skills/` directory as
+Beethoven workspaces use a single canonical `.agents/skills/` directory as
 the source-of-truth for skill files. The daemon automatically symlinks the
 active harness's expected path (`.claude/skills`, `.codex/skills`,
 `.gemini/skills`) to that source per `runtime.kind`. opencode reads

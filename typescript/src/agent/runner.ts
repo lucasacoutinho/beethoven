@@ -23,7 +23,7 @@ export { AgentRunError } from "./harness.ts"
  * upstream don't need to rename. Internally it's a Harness — every concrete
  * adapter implements the same interface.
  */
-export class AgentRunner extends Context.Tag("bethoveen/AgentRunner")<
+export class AgentRunner extends Context.Tag("beethoven/AgentRunner")<
   AgentRunner,
   Harness
 >() {}

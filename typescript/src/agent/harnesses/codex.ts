@@ -28,8 +28,8 @@ import type {
 import { AgentRunError } from "../harness.ts"
 import type { Settings } from "../../config/schema.ts"
 import {
-  bethoveenToolDefinitions,
-  executeBethoveenTool,
+  beethovenToolDefinitions,
+  executeBeethovenTool,
 } from "../../tools/index.ts"
 import { toCodexDynamicTools } from "./codex-tools.ts"
 
@@ -39,18 +39,18 @@ const THREAD_START_ID = 2
 const TURN_START_ID = 3
 const NON_INTERACTIVE_ANSWER =
   "This is a non-interactive session. Operator input is unavailable."
-const BRIDGE_READY = "bethoveen/codex-stdio-bridge-ready"
+const BRIDGE_READY = "beethoven/codex-stdio-bridge-ready"
 
 const CODEX_STDIO_BRIDGE = String.raw`
 const { spawn } = require("node:child_process")
 const { appendFileSync, existsSync, readFileSync, statSync, unwatchFile, watchFile, writeFileSync } = require("node:fs")
 
-const command = process.env.BETHOVEEN_CODEX_COMMAND
-const cwd = process.env.BETHOVEEN_CODEX_CWD
-const inputPath = process.env.BETHOVEEN_CODEX_INPUT
-const outputPath = process.env.BETHOVEEN_CODEX_OUTPUT
-const readyPath = process.env.BETHOVEEN_CODEX_READY
-const shell = process.env.BETHOVEEN_CODEX_SHELL || "sh"
+const command = process.env.BEETHOVEN_CODEX_COMMAND
+const cwd = process.env.BEETHOVEN_CODEX_CWD
+const inputPath = process.env.BEETHOVEN_CODEX_INPUT
+const outputPath = process.env.BEETHOVEN_CODEX_OUTPUT
+const readyPath = process.env.BEETHOVEN_CODEX_READY
+const shell = process.env.BEETHOVEN_CODEX_SHELL || "sh"
 
 if (!command || !cwd || !inputPath || !outputPath || !readyPath) {
   console.error("Missing Codex bridge configuration.")
@@ -240,8 +240,8 @@ async function startSession(
     params: {
       capabilities: { experimentalApi: true },
       clientInfo: {
-        name: "bethoveen-orchestrator",
-        title: "Bethoveen Orchestrator",
+        name: "beethoven-orchestrator",
+        title: "Beethoven Orchestrator",
         version: "0.1.0",
       },
     },
@@ -260,7 +260,7 @@ async function startThread(session: CodexSession): Promise<string> {
       approvalPolicy: session.approvalPolicy,
       sandbox: session.threadSandbox,
       cwd: session.cwd,
-      dynamicTools: toCodexDynamicTools(bethoveenToolDefinitions()),
+      dynamicTools: toCodexDynamicTools(beethovenToolDefinitions()),
     },
   })
 
@@ -485,7 +485,7 @@ async function handleApproval(
   if (message.method === "item/tool/call") {
     const params = message.params ?? {}
     const toolName = toolCallName(params)
-    const result = await executeBethoveenTool(
+    const result = await executeBeethovenTool(
       session.settings,
       toolName,
       toolCallArguments(params),
@@ -592,7 +592,7 @@ async function startCodexTransport(
     throw new Error("Codex harness requires `node` to run the stdio bridge.")
   }
 
-  const bridgeDir = mkdtempSync(path.join(tmpdir(), "bethoveen-codex-"))
+  const bridgeDir = mkdtempSync(path.join(tmpdir(), "beethoven-codex-"))
   const inputPath = path.join(bridgeDir, "stdin.jsonl")
   const outputPath = path.join(bridgeDir, "stdout.jsonl")
   const readyPath = path.join(bridgeDir, "ready")
@@ -603,12 +603,12 @@ async function startCodexTransport(
     cwd,
     env: {
       ...env,
-      BETHOVEEN_CODEX_COMMAND: command,
-      BETHOVEEN_CODEX_CWD: cwd,
-      BETHOVEEN_CODEX_INPUT: inputPath,
-      BETHOVEEN_CODEX_OUTPUT: outputPath,
-      BETHOVEEN_CODEX_READY: readyPath,
-      BETHOVEEN_CODEX_SHELL: shell,
+      BEETHOVEN_CODEX_COMMAND: command,
+      BEETHOVEN_CODEX_CWD: cwd,
+      BEETHOVEN_CODEX_INPUT: inputPath,
+      BEETHOVEN_CODEX_OUTPUT: outputPath,
+      BEETHOVEN_CODEX_READY: readyPath,
+      BEETHOVEN_CODEX_SHELL: shell,
     },
     stdout: "ignore",
     stderr: "ignore",

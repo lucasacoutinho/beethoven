@@ -1,4 +1,4 @@
-Bethoveen
+Beethoven
 Copyright 2026 Lucas Coutinho and contributors
 
 This product is a derivative work of:
@@ -7,7 +7,7 @@ This product is a derivative work of:
   Copyright 2025 OpenAI
   https://github.com/openai/symphony
 
-Bethoveen ports Symphony's specification and reference orchestrator into a
+Beethoven ports Symphony's specification and reference orchestrator into a
 Bun + Effect.TS + Ink stack and generalizes the execution layer to support
 multiple coding-agent harnesses (claude, codex, gemini, opencode).
 

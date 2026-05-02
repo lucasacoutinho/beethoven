@@ -9,12 +9,12 @@ import {
 
 const TOOLS: ReadonlyArray<ToolImplementation> = [linearGraphqlTool]
 
-export const bethoveenTools = (): ReadonlyArray<ToolImplementation> => TOOLS
+export const beethovenTools = (): ReadonlyArray<ToolImplementation> => TOOLS
 
-export const bethoveenToolDefinitions = (): ReadonlyArray<ToolDefinition> =>
+export const beethovenToolDefinitions = (): ReadonlyArray<ToolDefinition> =>
   TOOLS.map((tool) => tool.definition)
 
-export async function executeBethoveenTool(
+export async function executeBeethovenTool(
   settings: Settings,
   toolName: string | null,
   argumentsValue: unknown,

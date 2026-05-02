@@ -17,10 +17,10 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/bethoveen-workspaces
+  root: ~/code/beethoven-workspaces
 hooks:
   # Skills convention: install your team's skill files into .agents/skills/.
-  # Bethoveen automatically symlinks the active harness's expected path
+  # Beethoven automatically symlinks the active harness's expected path
   # (e.g. .claude/skills, .codex/skills, .gemini/skills)
   # to .agents/skills/ during workspace creation, based on runtime.kind.
   # You only have to populate the canonical source.
@@ -102,7 +102,7 @@ No description was provided.
 
 1. This is an unattended orchestration session. Operate end to end inside the provided workspace.
 2. Do not ask a human to do routine follow-up work. Stop only for true blockers such as missing auth, missing secrets, or unavailable required services.
-3. Keep all durable progress in a single Linear workpad comment headed `## Bethoveen Workpad`.
+3. Keep all durable progress in a single Linear workpad comment headed `## Beethoven Workpad`.
 4. Use Linear MCP or the `linear_graphql` tool only when tracker state must be read or updated. Do not load or call MCP tools speculatively.
 5. Work only inside the provided workspace directory. Do not modify files outside it.
 
@@ -127,7 +127,7 @@ No description was provided.
    - If the PR is closed or merged, do not reuse that branch or prior implementation state. Create a fresh branch from the target branch and restart from planning.
 5. For `Todo` tickets, do startup sequencing in this order:
    - move the issue to `In Progress`;
-   - find or create the `## Bethoveen Workpad` comment;
+   - find or create the `## Beethoven Workpad` comment;
    - reconcile the workpad;
    - begin analysis and implementation.
 6. If issue state and issue content conflict, record the inconsistency in the workpad and choose the safest flow.
@@ -137,7 +137,7 @@ No description was provided.
 Find or create exactly one active workpad comment with this marker:
 
 ```markdown
-## Bethoveen Workpad
+## Beethoven Workpad
 ```
 
 Keep that comment current throughout the run. It should contain:
@@ -263,7 +263,7 @@ Before moving to review or declaring completion, all of these must be true:
 Use this structure for the persistent workpad comment and keep it updated in place:
 
 ````markdown
-## Bethoveen Workpad
+## Beethoven Workpad
 
 ```text
 <host>:<absolute-workdir>@<short-sha>

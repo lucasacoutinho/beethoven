@@ -72,7 +72,7 @@ export interface OrchestratorService {
   readonly events: Stream.Stream<OrchestratorEvent>
 }
 
-export class Orchestrator extends Context.Tag("bethoveen/Orchestrator")<
+export class Orchestrator extends Context.Tag("beethoven/Orchestrator")<
   Orchestrator,
   OrchestratorService
 >() {}

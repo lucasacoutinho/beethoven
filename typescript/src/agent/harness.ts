@@ -151,7 +151,7 @@ export interface Harness {
 
 /**
  * Workspace-relative source-of-truth for skill files. `WORKFLOW.md` hooks
- * (or any equivalent installer) should populate this directory; Bethoveen
+ * (or any equivalent installer) should populate this directory; Beethoven
  * then symlinks the active harness's `skillsPath` to point here so each
  * harness finds its expected layout without duplication.
  */

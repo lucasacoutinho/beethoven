@@ -97,7 +97,7 @@ export function Dashboard({
 
   return (
     <Box flexDirection="column">
-      <BorderTop label="BETHOVEEN STATUS" />
+      <BorderTop label="BEETHOVEN STATUS" />
       <BorderRow>
         <Text bold>Agents: </Text>
         <Text color="green">{agentCount}</Text>

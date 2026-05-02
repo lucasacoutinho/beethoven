@@ -61,7 +61,7 @@ export interface WorkspaceManagerService {
   ) => Effect.Effect<LinkSkillsResult>
 }
 
-export class WorkspaceManager extends Context.Tag("bethoveen/WorkspaceManager")<
+export class WorkspaceManager extends Context.Tag("beethoven/WorkspaceManager")<
   WorkspaceManager,
   WorkspaceManagerService
 >() {}

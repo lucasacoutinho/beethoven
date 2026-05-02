@@ -5,7 +5,7 @@ const ISSUE_PAGE_SIZE = 50
 const RELATION_FIRST = 50
 
 const POLL_QUERY = /* GraphQL */ `
-  query BethoveenLinearPoll(
+  query BeethovenLinearPoll(
     $projectSlug: String!
     $stateNames: [String!]!
     $first: Int!
@@ -41,7 +41,7 @@ const POLL_QUERY = /* GraphQL */ `
 `
 
 const BY_IDS_QUERY = /* GraphQL */ `
-  query BethoveenLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
+  query BeethovenLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
     issues(filter: { id: { in: $ids } }, first: $first) {
       nodes {
         id identifier title description priority
@@ -110,7 +110,7 @@ export interface LinearClientService {
   ) => Effect.Effect<ReadonlyArray<Issue>, LinearError>
 }
 
-export class LinearClient extends Context.Tag("bethoveen/LinearClient")<
+export class LinearClient extends Context.Tag("beethoven/LinearClient")<
   LinearClient,
   LinearClientService
 >() {}

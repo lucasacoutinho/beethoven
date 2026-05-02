@@ -29,7 +29,7 @@ describe("WORKFLOW.example.md", () => {
     expect(settings.tracker.projectSlug).toBe("your-project-slug")
     expect(prompt).toContain("Linear ticket `BLE-123`")
     expect(prompt).toContain("This is continuation attempt #2")
-    expect(prompt).toContain("## Bethoveen Workpad")
+    expect(prompt).toContain("## Beethoven Workpad")
     expect(prompt).toContain("Use Linear MCP or the `linear_graphql` tool only when tracker state must be read or updated")
   })
 })

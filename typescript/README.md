@@ -1,9 +1,9 @@
-# Bethoveen
+# Beethoven
 
 A harness-agnostic port of [Symphony](https://github.com/openai/symphony),
 built on **Bun**, **Effect.TS**, and **Ink**.
 
-Bethoveen is a long-running daemon that polls an issue tracker (Linear today),
+Beethoven is a long-running daemon that polls an issue tracker (Linear today),
 creates an isolated per-issue workspace, runs a coding-agent session in that
 workspace via one of four supported harnesses, and renders a live terminal
 dashboard so you can see what's happening without a web UI.
@@ -21,7 +21,7 @@ It follows the layered spec at [`../SPEC.md`](../SPEC.md) — **Policy
 (`WORKFLOW.md`) → Config → Coordination → Execution → Integration → Observability** —
 which itself is a port of Symphony's SPEC with the execution layer
 generalized to multiple harnesses (Symphony's `codex:` block becomes
-Bethoveen's `runtime:` block with a `kind` discriminator).
+Beethoven's `runtime:` block with a `kind` discriminator).
 
 > **Status:** scaffold / engineering preview. Not production-ready.
 
@@ -86,7 +86,7 @@ bun run start
 bun src/cli/main.tsx run --no-ui
 ```
 
-## Workflow front-matter (Bethoveen variant)
+## Workflow front-matter (Beethoven variant)
 
 ```yaml
 tracker:
@@ -98,7 +98,7 @@ tracker:
 polling:
   interval_ms: 30000
 workspace:
-  root: ~/code/bethoveen-workspaces
+  root: ~/code/beethoven-workspaces
 agent:
   max_concurrent_agents: 5
   max_turns: 20
@@ -135,7 +135,7 @@ same as Symphony's). See `WORKFLOW.example.md`.
 ### Skills layout
 
 Install your team's skill files into `.agents/skills/` inside the workspace
-(typically via the `after_create` hook). Bethoveen automatically symlinks the
+(typically via the `after_create` hook). Beethoven automatically symlinks the
 active harness's expected path (`.claude/skills`, `.codex/skills`,
 `.gemini/skills`) to that canonical source per `runtime.kind`. opencode reads
 `.agents/skills` natively, so no symlink is created for that harness.

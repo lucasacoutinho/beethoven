@@ -296,7 +296,7 @@ function resolve(parsed: RawWorkflowConfig, workflowFilePath: string): Settings 
 
   const workspaceRoot = parsed.workspace.root
     ? resolveWorkflowPath(parsed.workspace.root, baseDir)
-    : path.join(os.tmpdir(), "bethoveen_workspaces")
+    : path.join(os.tmpdir(), "beethoven_workspaces")
 
   const apiKey =
     resolveEnv(parsed.tracker.api_key) ?? Bun.env.LINEAR_API_KEY

@@ -27,18 +27,18 @@ interface CliArgs {
   readonly logFile: string
 }
 
-const HELP_TEXT = `bethoveen — Claude Code-native Symphony port
+const HELP_TEXT = `beethoven — Claude Code-native Symphony port
 
 Usage:
-  bethoveen run [--workflow WORKFLOW.md] [--no-ui] [--log-level Info] [--log-file PATH]
-  bethoveen list [--workflow WORKFLOW.md]
-  bethoveen validate [--workflow WORKFLOW.md]
-  bethoveen help
+  beethoven run [--workflow WORKFLOW.md] [--no-ui] [--log-level Info] [--log-file PATH]
+  beethoven list [--workflow WORKFLOW.md]
+  beethoven validate [--workflow WORKFLOW.md]
+  beethoven help
 
 Run renders an Ink dashboard by default; pass --no-ui for log-only stderr.
 List polls the tracker once and prints candidates, then exits — no dispatch.
 
-Run mode always writes JSON-line logs to --log-file (default ./log/bethoveen.log).
+Run mode always writes JSON-line logs to --log-file (default ./log/beethoven.log).
 With --ui (default), stderr is silenced so the dashboard renders cleanly.
 With --no-ui, logs go to both stderr and the file.
 `
@@ -48,7 +48,7 @@ function parseCli(argv: ReadonlyArray<string>): CliArgs {
   let workflow = "WORKFLOW.md"
   let logLevel: CliArgs["logLevel"] = "Info"
   let ui = true
-  let logFile = "log/bethoveen.log"
+  let logFile = "log/beethoven.log"
 
   const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {

@@ -6,21 +6,21 @@ import {
 import { z } from "zod/v4"
 
 import type { Settings } from "../../config/schema.ts"
-import { executeBethoveenTool } from "../../tools/index.ts"
+import { executeBeethovenTool } from "../../tools/index.ts"
 import {
   LINEAR_GRAPHQL_TOOL,
   linearGraphqlTool,
 } from "../../tools/linear-graphql.ts"
 import type { ToolExecutionResult } from "../../tools/tool.ts"
 
-export const CLAUDE_BETHOVEEN_MCP_SERVER = "bethoveen"
+export const CLAUDE_BEETHOVEN_MCP_SERVER = "beethoven"
 
-export function claudeBethoveenMcpServers(
+export function claudeBeethovenMcpServers(
   settings: Settings,
 ): Record<string, McpServerConfig> {
   return {
-    [CLAUDE_BETHOVEEN_MCP_SERVER]: createSdkMcpServer({
-      name: CLAUDE_BETHOVEEN_MCP_SERVER,
+    [CLAUDE_BEETHOVEN_MCP_SERVER]: createSdkMcpServer({
+      name: CLAUDE_BEETHOVEN_MCP_SERVER,
       version: "0.1.0",
       tools: [
         tool(
@@ -38,7 +38,7 @@ export function claudeBethoveenMcpServers(
           },
           async (args) =>
             toClaudeToolResult(
-              await executeBethoveenTool(settings, LINEAR_GRAPHQL_TOOL, args),
+              await executeBeethovenTool(settings, LINEAR_GRAPHQL_TOOL, args),
             ),
         ),
       ],
@@ -46,8 +46,8 @@ export function claudeBethoveenMcpServers(
   }
 }
 
-export const claudeBethoveenToolNames = (): ReadonlyArray<string> => [
-  `mcp__${CLAUDE_BETHOVEEN_MCP_SERVER}__${LINEAR_GRAPHQL_TOOL}`,
+export const claudeBeethovenToolNames = (): ReadonlyArray<string> => [
+  `mcp__${CLAUDE_BEETHOVEN_MCP_SERVER}__${LINEAR_GRAPHQL_TOOL}`,
 ]
 
 function toClaudeToolResult(result: ToolExecutionResult) {

@@ -3,20 +3,20 @@ import { describe, expect, test } from "bun:test"
 import type { Settings } from "../../config/schema.ts"
 import { LINEAR_GRAPHQL_TOOL } from "../../tools/linear-graphql.ts"
 import {
-  CLAUDE_BETHOVEEN_MCP_SERVER,
-  claudeBethoveenMcpServers,
-  claudeBethoveenToolNames,
+  CLAUDE_BEETHOVEN_MCP_SERVER,
+  claudeBeethovenMcpServers,
+  claudeBeethovenToolNames,
 } from "./claude-tools.ts"
 
 describe("Claude tool adapter", () => {
-  test("registers Bethoveen tools as an in-process SDK MCP server", async () => {
-    const servers = claudeBethoveenMcpServers(makeSettings())
-    const server = servers[CLAUDE_BETHOVEEN_MCP_SERVER]
+  test("registers Beethoven tools as an in-process SDK MCP server", async () => {
+    const servers = claudeBeethovenMcpServers(makeSettings())
+    const server = servers[CLAUDE_BEETHOVEN_MCP_SERVER]
 
     expect(server?.type).toBe("sdk")
-    expect(serverName(server)).toBe(CLAUDE_BETHOVEEN_MCP_SERVER)
-    expect(claudeBethoveenToolNames()).toContain(
-      `mcp__${CLAUDE_BETHOVEEN_MCP_SERVER}__${LINEAR_GRAPHQL_TOOL}`,
+    expect(serverName(server)).toBe(CLAUDE_BEETHOVEN_MCP_SERVER)
+    expect(claudeBeethovenToolNames()).toContain(
+      `mcp__${CLAUDE_BEETHOVEN_MCP_SERVER}__${LINEAR_GRAPHQL_TOOL}`,
     )
 
     const tools = registeredTools(server)
@@ -31,7 +31,7 @@ describe("Claude tool adapter", () => {
     expect(result?.content?.[0]).toMatchObject({
       type: "text",
     })
-    expect(result?.content?.[0]?.text).toContain("Bethoveen is missing Linear auth")
+    expect(result?.content?.[0]?.text).toContain("Beethoven is missing Linear auth")
   })
 })
 
@@ -77,7 +77,7 @@ function makeSettings(): Settings {
       terminalStates: ["Done", "Cancelled", "Duplicate"],
     },
     polling: { intervalMs: 30_000 },
-    workspace: { root: "/tmp/bethoveen-test" },
+    workspace: { root: "/tmp/beethoven-test" },
     hooks: {
       afterCreate: undefined,
       beforeRun: undefined,

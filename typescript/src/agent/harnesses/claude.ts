@@ -18,8 +18,8 @@ import type {
 import { AgentRunError } from "../harness.ts"
 import type { Settings } from "../../config/schema.ts"
 import {
-  claudeBethoveenMcpServers,
-  claudeBethoveenToolNames,
+  claudeBeethovenMcpServers,
+  claudeBeethovenToolNames,
 } from "./claude-tools.ts"
 
 const FALLBACK_LIMIT_PAUSE_MS = 300_000
@@ -52,10 +52,10 @@ export const makeClaudeHarness = (settings: Settings): Harness => {
       ...(common.mcpServers
         ? (common.mcpServers as NonNullable<Options["mcpServers"]>)
         : {}),
-      ...claudeBethoveenMcpServers(settings),
+      ...claudeBeethovenMcpServers(settings),
     }
     const allowedTools = common.allowedTools
-      ? Array.from(new Set([...common.allowedTools, ...claudeBethoveenToolNames()]))
+      ? Array.from(new Set([...common.allowedTools, ...claudeBeethovenToolNames()]))
       : undefined
 
     return {
