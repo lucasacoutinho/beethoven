@@ -20,10 +20,9 @@ export interface DashboardProps {
 
 const COLS = {
   id: 8,
-  stage: 14,
-  age: 12,
-  tokens: 14,
-  session: 14,
+  stage: 9,
+  age: 10,
+  tokens: 10,
 }
 
 export function Dashboard({
@@ -177,42 +176,42 @@ function RunningTable({
         <ColumnHeader text="Stage" width={COLS.stage} />
         <ColumnHeader text="Age" width={COLS.age} />
         <ColumnHeader text="Tokens" width={COLS.tokens} />
-        <ColumnHeader text="Session" width={COLS.session} />
-        <ColumnHeader text="Latest" width={0} />
+        <ColumnHeader text="Agent / Latest" width={0} />
       </BorderRow>
-      {rows.map((r) => (
-        <BorderRow key={r.issueId}>
-          <Cell width={COLS.id}>
-            <Text color="green">{pad(r.identifier, COLS.id)}</Text>
-          </Cell>
-          <Cell width={COLS.stage}>
-            <Text>{pad(`turn ${r.turn}`, COLS.stage)}</Text>
-          </Cell>
-          <Cell width={COLS.age}>
-            <Text dimColor>{pad(formatDuration(now - r.startedAt), COLS.age)}</Text>
-          </Cell>
-          <Cell width={COLS.tokens}>
-            <Text color="yellow">
-              {pad(formatCount(r.liveTokens.total), COLS.tokens)}
-            </Text>
-          </Cell>
-          <Cell width={COLS.session}>
-            <Text dimColor>{pad(truncate(r.title, COLS.session), COLS.session)}</Text>
-          </Cell>
-          <Cell width={0}>
-            <Text>
-              {r.latestTool ? (
-                <Text color="blue">⏵ {r.latestTool}</Text>
-              ) : (
-                <Text dimColor>idle</Text>
+      {rows.map((r) => {
+        const latest = formatLatest(r.latestTool, r.latestMessage)
+        return (
+          <React.Fragment key={r.issueId}>
+            <BorderRow>
+              <Cell width={COLS.id}>
+                <Text color="green">{pad(r.identifier, COLS.id)}</Text>
+              </Cell>
+              <Cell width={COLS.stage}>
+                <Text>{pad(`turn ${r.turn}`, COLS.stage)}</Text>
+              </Cell>
+              <Cell width={COLS.age}>
+                <Text dimColor>{pad(formatDuration(now - r.startedAt), COLS.age)}</Text>
+              </Cell>
+              <Cell width={COLS.tokens}>
+                <Text color="yellow">
+                  {pad(formatCount(r.liveTokens.total), COLS.tokens)}
+                </Text>
+              </Cell>
+              <Text color="magenta">{compactAgentId(r.agent.id)}</Text>
+              <Text dimColor> · </Text>
+              <Text color="cyan">{r.agent.model ?? r.agent.kind}</Text>
+              {r.processPid === null ? null : (
+                <Text dimColor> · pid {r.processPid}</Text>
               )}
-              {r.latestMessage ? (
-                <Text dimColor> · {truncate(r.latestMessage, 50)}</Text>
-              ) : null}
-            </Text>
-          </Cell>
-        </BorderRow>
-      ))}
+            </BorderRow>
+            <BorderRow>
+              <Text dimColor>  {truncate(r.title, 26)} · </Text>
+              {latest.tool ? <Text color="blue">⏵ {latest.tool}</Text> : <Text dimColor>idle</Text>}
+              {latest.message ? <Text dimColor> · {latest.message}</Text> : null}
+            </BorderRow>
+          </React.Fragment>
+        )
+      })}
     </Box>
   )
 }
@@ -320,6 +319,24 @@ function pad(s: string, width: number): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s
+}
+
+function compactAgentId(id: string): string {
+  return id
+    .replace(/^claude-/, "")
+    .replace(/^codex-/, "")
+    .replace(/^gemini-/, "")
+    .replace(/^opencode-/, "")
+}
+
+function formatLatest(
+  tool: string | null,
+  message: string | null,
+): { readonly tool: string | null; readonly message: string | null } {
+  return {
+    tool: tool ? truncate(tool, 18) : null,
+    message: message ? truncate(message.replace(/\s+/g, " "), 72) : null,
+  }
 }
 
 function linearProjectUrl(slug: string): string {

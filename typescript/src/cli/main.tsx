@@ -5,7 +5,8 @@ import { Effect, Fiber, Layer, Logger, LogLevel, Stream } from "effect"
 import { BunContext } from "@effect/platform-bun"
 
 import { loadWorkflow } from "../workflow/loader.ts"
-import { parseSettings } from "../config/schema.ts"
+import { buildPrompt } from "../workflow/prompt-builder.ts"
+import { parseSettings, type Settings } from "../config/schema.ts"
 import { LinearClientLive, makeLinearClient } from "../tracker/linear-client.ts"
 import type { Issue } from "../tracker/issue.ts"
 import { FileLoggerLive } from "../logging/file-logger.ts"
@@ -84,6 +85,36 @@ function parseCli(argv: ReadonlyArray<string>): CliArgs {
   return { command, workflow, logLevel, ui, logFile }
 }
 
+const VALIDATE_ISSUE: Issue = {
+  id: "validate-issue",
+  identifier: "BLE-VALIDATE",
+  title: "Validate workflow template",
+  description: "Synthetic issue used to validate workflow prompt rendering.",
+  priority: null,
+  state: "In Progress",
+  branchName: null,
+  url: "https://linear.app/example/issue/BLE-VALIDATE",
+  labels: ["validate"],
+  blockedBy: [],
+  createdAt: null,
+  updatedAt: null,
+}
+
+function primaryAgentContext(settings: Settings) {
+  const primary = settings.agentPool.primaryAgent
+    ? settings.agentPool.members.find(
+        (member) => member.id === settings.agentPool.primaryAgent,
+      )
+    : undefined
+  return {
+    id: primary?.id ?? settings.runtime.kind,
+    role: primary?.role ?? null,
+    kind: primary?.kind ?? settings.runtime.kind,
+    model: primary?.model ?? settings.runtime.common.model ?? settings.runtime.kind,
+    effort: primary?.effort ?? settings.runtime.common.effort ?? "default",
+  }
+}
+
 const program = Effect.gen(function* () {
   const args = parseCli(Bun.argv.slice(2))
   if (args.command === "help") {
@@ -95,6 +126,12 @@ const program = Effect.gen(function* () {
   const settings = yield* parseSettings(workflow.config, workflow.sourcePath)
 
   if (args.command === "validate") {
+    yield* buildPrompt({
+      template: workflow.promptTemplate,
+      issue: VALIDATE_ISSUE,
+      attempt: 1,
+      agent: primaryAgentContext(settings),
+    })
     yield* Effect.log("validate_ok").pipe(
       Effect.annotateLogs({
         workflow: workflow.sourcePath,

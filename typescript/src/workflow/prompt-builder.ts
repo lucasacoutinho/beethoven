@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect"
 import { Liquid } from "liquidjs"
 import type { Issue } from "../tracker/issue.ts"
+import type { AgentPoolRole, HarnessKind } from "../agent/harness.ts"
 
 export class TemplateRenderError extends Data.TaggedError("TemplateRenderError")<{
   readonly code: "template_parse_error" | "template_render_error"
@@ -16,13 +17,22 @@ const engine = new Liquid({
   cache: false,
 })
 
+export interface PromptAgentContext {
+  readonly id: string
+  readonly role: AgentPoolRole | null
+  readonly kind: HarnessKind
+  readonly model: string
+  readonly effort: string
+}
+
 export const buildPrompt = (opts: {
   template: string
   issue: Issue
   attempt: number | null
+  agent: PromptAgentContext
 }): Effect.Effect<string, TemplateRenderError> =>
   Effect.gen(function* () {
-    const { template, issue, attempt } = opts
+    const { template, issue, attempt, agent } = opts
     if (!template.trim()) return FALLBACK_PROMPT
 
     const parsed = yield* Effect.try({
@@ -36,11 +46,11 @@ export const buildPrompt = (opts: {
     })
 
     return yield* Effect.tryPromise({
-      try: () => engine.render(parsed, { issue, attempt }),
+      try: () => engine.render(parsed, { issue, attempt, agent }),
       catch: (cause) =>
         new TemplateRenderError({
           code: "template_render_error",
-          message: "Failed to render workflow prompt template",
+          message: `Failed to render workflow prompt template: ${cause instanceof Error ? cause.message : String(cause)}`,
           cause,
         }),
     })

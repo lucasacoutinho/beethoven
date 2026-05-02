@@ -111,6 +111,66 @@ const RuntimeOpencodeSchema = Schema.Struct({
   skills_path: Schema.optional(Schema.String),
 })
 
+const AgentPoolMemberSchema = Schema.Struct({
+  id: Schema.String,
+  role: Schema.Literal("maestro", "soloist", "accompanist"),
+  capabilities: Schema.optionalWith(Schema.Array(Schema.String), {
+    default: () => [] as const,
+  }),
+  kind: Schema.Literal("claude", "codex", "gemini", "opencode"),
+  model: Schema.optional(Schema.String),
+  effort: Schema.optional(
+    Schema.Literal("low", "medium", "high", "xhigh", "max"),
+  ),
+  instructions: Schema.optional(Schema.String),
+  cwd: Schema.optional(Schema.String),
+  timeout_ms: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
+    default: () => 600_000,
+  }),
+  max_output_chars: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
+    default: () => 12_000,
+  }),
+  permission_mode: Schema.optional(
+    Schema.Literal("default", "acceptEdits", "bypassPermissions"),
+  ),
+  allowed_tools: Schema.optional(Schema.Array(Schema.String)),
+  disallowed_tools: Schema.optional(Schema.Array(Schema.String)),
+  env: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.String }),
+  ),
+  claude: Schema.optionalWith(RuntimeClaudeSchema, {
+    default: () => ({}) as never,
+  }),
+  codex: Schema.optionalWith(RuntimeCodexSchema, {
+    default: () =>
+      ({
+        auto_approve_requests: false,
+        thread_sandbox: "workspace-write",
+      }) as never,
+  }),
+  gemini: Schema.optionalWith(RuntimeGeminiSchema, {
+    default: () => ({}) as never,
+  }),
+  opencode: Schema.optionalWith(RuntimeOpencodeSchema, {
+    default: () => ({}) as never,
+  }),
+})
+
+const AgentPoolSchema = Schema.Struct({
+  primary_agent: Schema.optional(Schema.String),
+  primary_fallback_roles: Schema.optionalWith(
+    Schema.Array(Schema.Literal("maestro", "soloist", "accompanist")),
+    { default: () => ["maestro"] as const },
+  ),
+  on_primary_unavailable: Schema.optionalWith(
+    Schema.Literal("reassign", "pause", "fail"),
+    { default: () => "reassign" as const },
+  ),
+  members: Schema.optionalWith(Schema.Array(AgentPoolMemberSchema), {
+    default: () => [] as const,
+  }),
+})
+
 const RuntimeSchema = Schema.Struct({
   kind: Schema.optionalWith(
     Schema.Literal("claude", "codex", "gemini", "opencode"),
@@ -166,6 +226,7 @@ export const RawWorkflowConfigSchema = Schema.Struct({
   hooks: HooksSchema,
   agent: AgentSchema,
   runtime: RuntimeSchema,
+  agent_pool: AgentPoolSchema,
 })
 
 export type RawWorkflowConfig = Schema.Schema.Type<typeof RawWorkflowConfigSchema>
@@ -259,6 +320,43 @@ export interface Settings {
       readonly skillsPath: string
     }
   }
+  readonly agentPool: {
+    readonly primaryAgent: string | undefined
+    readonly primaryFallbackRoles: ReadonlyArray<"maestro" | "soloist" | "accompanist">
+    readonly onPrimaryUnavailable: "reassign" | "pause" | "fail"
+    readonly members: ReadonlyArray<AgentPoolMemberSettings>
+  }
+}
+
+export interface AgentPoolMemberSettings {
+  readonly id: string
+  readonly role: "maestro" | "soloist" | "accompanist"
+  readonly capabilities: ReadonlyArray<string>
+  readonly kind: "claude" | "codex" | "gemini" | "opencode"
+  readonly model: string | undefined
+  readonly effort:
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max"
+    | undefined
+  readonly instructions: string | undefined
+  readonly cwd: string | undefined
+  readonly timeoutMs: number
+  readonly maxOutputChars: number
+  readonly permissionMode:
+    | "default"
+    | "acceptEdits"
+    | "bypassPermissions"
+    | undefined
+  readonly allowedTools: ReadonlyArray<string> | undefined
+  readonly disallowedTools: ReadonlyArray<string> | undefined
+  readonly env: Record<string, string> | undefined
+  readonly claude: Settings["runtime"]["claude"]
+  readonly codex: Settings["runtime"]["codex"]
+  readonly gemini: Settings["runtime"]["gemini"]
+  readonly opencode: Settings["runtime"]["opencode"]
 }
 
 const decodeRaw = Schema.decodeUnknown(RawWorkflowConfigSchema)
@@ -288,6 +386,7 @@ function ensureGroups(raw: unknown): unknown {
     hooks: r.hooks ?? {},
     agent: r.agent ?? {},
     runtime: r.runtime ?? {},
+    agent_pool: r.agent_pool ?? {},
   }
 }
 
@@ -306,6 +405,16 @@ function resolve(parsed: RawWorkflowConfig, workflowFilePath: string): Settings 
       ([k, v]) => [k.toLowerCase(), v as number],
     ),
   )
+
+  const agentPoolMembers = parsed.agent_pool.members.map((member) =>
+    resolveAgentPoolMember(member),
+  )
+  const primaryMember = parsed.agent_pool.primary_agent
+    ? agentPoolMembers.find((member) => member.id === parsed.agent_pool.primary_agent)
+    : undefined
+  const runtimeSettings = primaryMember
+    ? settingsForAgentPoolMember(parsed.runtime, primaryMember)
+    : settingsForRuntime(parsed.runtime)
 
   return {
     tracker: {
@@ -331,70 +440,151 @@ function resolve(parsed: RawWorkflowConfig, workflowFilePath: string): Settings 
       maxRetryBackoffMs: parsed.agent.max_retry_backoff_ms,
       maxConcurrentAgentsByState: concurrencyByState,
     },
-    runtime: {
-      kind: parsed.runtime.kind,
-      common: {
-        model: parsed.runtime.model,
-        permissionMode: parsed.runtime.permission_mode,
-        effort: parsed.runtime.effort,
-        allowedTools: parsed.runtime.allowed_tools,
-        disallowedTools: parsed.runtime.disallowed_tools,
-        cwd: parsed.runtime.cwd,
-        turnTimeoutMs: parsed.runtime.turn_timeout_ms,
-        readTimeoutMs: parsed.runtime.read_timeout_ms,
-        stallTimeoutMs: parsed.runtime.stall_timeout_ms,
-        mcpServers: parsed.runtime.mcp_servers as
-          | Record<string, unknown>
-          | undefined,
-        env: parsed.runtime.env as Record<string, string> | undefined,
-      },
-      claude: {
-        thinkingMode: parsed.runtime.claude.thinking_mode,
-        thinkingBudgetTokens: parsed.runtime.claude.thinking_budget_tokens,
-        executable:
-          resolveEnv(parsed.runtime.claude.executable) ??
-          (parsed.runtime.kind === "claude"
-            ? (Bun.which("claude") ?? undefined)
-            : undefined),
-        skillsPath:
-          parsed.runtime.claude.skills_path ?? DEFAULT_SKILLS_PATHS.claude,
-      },
-      codex: {
-        command: parsed.runtime.codex.command,
-        approvalPolicy: parsed.runtime.codex.approval_policy,
-        autoApproveRequests: parsed.runtime.codex.auto_approve_requests,
-        threadSandbox: parsed.runtime.codex.thread_sandbox,
-        turnSandboxPolicy: parsed.runtime.codex.turn_sandbox_policy as
-          | Record<string, unknown>
-          | undefined,
-        sandboxPolicy: parsed.runtime.codex.sandbox_policy,
-        personality: parsed.runtime.codex.personality,
-        skillsPath:
-          parsed.runtime.codex.skills_path ?? DEFAULT_SKILLS_PATHS.codex,
-      },
-      gemini: {
-        includeDirectories: parsed.runtime.gemini.include_directories,
-        executable:
-          resolveEnv(parsed.runtime.gemini.executable) ??
-          (parsed.runtime.kind === "gemini"
-            ? (Bun.which("gemini") ?? undefined)
-            : undefined),
-        skillsPath:
-          parsed.runtime.gemini.skills_path ?? DEFAULT_SKILLS_PATHS.gemini,
-      },
-      opencode: {
-        provider: parsed.runtime.opencode.provider,
-        attachUrl: parsed.runtime.opencode.attach_url,
-        resumeSession: parsed.runtime.opencode.resume_session,
-        executable:
-          resolveEnv(parsed.runtime.opencode.executable) ??
-          (parsed.runtime.kind === "opencode"
-            ? (Bun.which("opencode") ?? undefined)
-            : undefined),
-        skillsPath:
-          parsed.runtime.opencode.skills_path ?? DEFAULT_SKILLS_PATHS.opencode,
+    runtime: runtimeSettings,
+    agentPool: {
+      primaryAgent: parsed.agent_pool.primary_agent,
+      primaryFallbackRoles: parsed.agent_pool.primary_fallback_roles,
+      onPrimaryUnavailable: parsed.agent_pool.on_primary_unavailable,
+      members: agentPoolMembers,
+    },
+  }
+}
+
+function settingsForRuntime(
+  runtime: RawWorkflowConfig["runtime"],
+): Settings["runtime"] {
+  return {
+    kind: runtime.kind,
+    common: {
+      model: runtime.model,
+      permissionMode: runtime.permission_mode,
+      effort: runtime.effort,
+      allowedTools: runtime.allowed_tools,
+      disallowedTools: runtime.disallowed_tools,
+      cwd: runtime.cwd,
+      turnTimeoutMs: runtime.turn_timeout_ms,
+      readTimeoutMs: runtime.read_timeout_ms,
+      stallTimeoutMs: runtime.stall_timeout_ms,
+      mcpServers: runtime.mcp_servers as Record<string, unknown> | undefined,
+      env: runtime.env as Record<string, string> | undefined,
+    },
+    claude: resolveClaudeSettings(runtime.claude, runtime.kind),
+    codex: resolveCodexSettings(runtime.codex),
+    gemini: resolveGeminiSettings(runtime.gemini, runtime.kind),
+    opencode: resolveOpencodeSettings(runtime.opencode, runtime.kind),
+  }
+}
+
+function settingsForAgentPoolMember(
+  runtime: RawWorkflowConfig["runtime"],
+  member: AgentPoolMemberSettings,
+): Settings["runtime"] {
+  const baseRuntime = settingsForRuntime(runtime)
+  return {
+    ...baseRuntime,
+    kind: member.kind,
+    common: {
+      ...baseRuntime.common,
+      model: member.model,
+      effort: member.effort,
+      permissionMode: member.permissionMode,
+      allowedTools: member.allowedTools,
+      disallowedTools: member.disallowedTools,
+      cwd: member.cwd ?? runtime.cwd,
+      turnTimeoutMs: member.timeoutMs,
+      env: {
+        ...(runtime.env as Record<string, string> | undefined),
+        ...(member.env ?? {}),
       },
     },
+    claude: member.claude,
+    codex: member.codex,
+    gemini: member.gemini,
+    opencode: member.opencode,
+  }
+}
+
+function resolveAgentPoolMember(
+  member: RawWorkflowConfig["agent_pool"]["members"][number],
+): AgentPoolMemberSettings {
+  return {
+    id: member.id,
+    role: member.role,
+    capabilities: member.capabilities,
+    kind: member.kind,
+    model: member.model,
+    effort: member.effort,
+    instructions: member.instructions,
+    cwd: member.cwd,
+    timeoutMs: member.timeout_ms,
+    maxOutputChars: member.max_output_chars,
+    permissionMode: member.permission_mode,
+    allowedTools: member.allowed_tools,
+    disallowedTools: member.disallowed_tools,
+    env: member.env as Record<string, string> | undefined,
+    claude: resolveClaudeSettings(member.claude, member.kind),
+    codex: resolveCodexSettings(member.codex),
+    gemini: resolveGeminiSettings(member.gemini, member.kind),
+    opencode: resolveOpencodeSettings(member.opencode, member.kind),
+  }
+}
+
+function resolveClaudeSettings(
+  claude: RawWorkflowConfig["runtime"]["claude"],
+  kind: RawWorkflowConfig["runtime"]["kind"],
+): Settings["runtime"]["claude"] {
+  return {
+    thinkingMode: claude.thinking_mode,
+    thinkingBudgetTokens: claude.thinking_budget_tokens,
+    executable:
+      resolveEnv(claude.executable) ??
+      (kind === "claude" ? (Bun.which("claude") ?? undefined) : undefined),
+    skillsPath: claude.skills_path ?? DEFAULT_SKILLS_PATHS.claude,
+  }
+}
+
+function resolveCodexSettings(
+  codex: RawWorkflowConfig["runtime"]["codex"],
+): Settings["runtime"]["codex"] {
+  return {
+    command: codex.command,
+    approvalPolicy: codex.approval_policy,
+    autoApproveRequests: codex.auto_approve_requests,
+    threadSandbox: codex.thread_sandbox,
+    turnSandboxPolicy: codex.turn_sandbox_policy as
+      | Record<string, unknown>
+      | undefined,
+    sandboxPolicy: codex.sandbox_policy,
+    personality: codex.personality,
+    skillsPath: codex.skills_path ?? DEFAULT_SKILLS_PATHS.codex,
+  }
+}
+
+function resolveGeminiSettings(
+  gemini: RawWorkflowConfig["runtime"]["gemini"],
+  kind: RawWorkflowConfig["runtime"]["kind"],
+): Settings["runtime"]["gemini"] {
+  return {
+    includeDirectories: gemini.include_directories,
+    executable:
+      resolveEnv(gemini.executable) ??
+      (kind === "gemini" ? (Bun.which("gemini") ?? undefined) : undefined),
+    skillsPath: gemini.skills_path ?? DEFAULT_SKILLS_PATHS.gemini,
+  }
+}
+
+function resolveOpencodeSettings(
+  opencode: RawWorkflowConfig["runtime"]["opencode"],
+  kind: RawWorkflowConfig["runtime"]["kind"],
+): Settings["runtime"]["opencode"] {
+  return {
+    provider: opencode.provider,
+    attachUrl: opencode.attach_url,
+    resumeSession: opencode.resume_session,
+    executable:
+      resolveEnv(opencode.executable) ??
+      (kind === "opencode" ? (Bun.which("opencode") ?? undefined) : undefined),
+    skillsPath: opencode.skills_path ?? DEFAULT_SKILLS_PATHS.opencode,
   }
 }
 

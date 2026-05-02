@@ -15,12 +15,18 @@ import {
 } from "effect"
 
 import type { Settings } from "../config/schema.ts"
+import type { AgentPoolRole, HarnessKind } from "../agent/harness.ts"
 import type { Issue } from "../tracker/issue.ts"
 import { normalizeState } from "../tracker/issue.ts"
 import { LinearClient } from "../tracker/linear-client.ts"
-import { WorkspaceManager } from "../workspace/workspace.ts"
-import { AgentRunner } from "../agent/runner.ts"
-import type { RateLimitSnapshot } from "../agent/harness.ts"
+import { WorkspaceManager, type Workspace } from "../workspace/workspace.ts"
+import { AgentRunner, makeHarness } from "../agent/runner.ts"
+import type {
+  AgentTaskDelegate,
+  AgentTaskRequest,
+  AgentTaskResult,
+  RateLimitSnapshot,
+} from "../agent/harness.ts"
 import { buildPrompt } from "../workflow/prompt-builder.ts"
 
 export interface DispatchSnapshot {
@@ -29,6 +35,8 @@ export interface DispatchSnapshot {
     readonly identifier: string
     readonly title: string
     readonly state: string
+    readonly agent: RunningAgentInfo
+    readonly processPid: number | null
     readonly startedAt: number
     readonly turn: number
     readonly latestTool: string | null
@@ -46,6 +54,14 @@ export interface DispatchSnapshot {
   readonly rateLimits: RateLimitSnapshot | null
   readonly dispatchPausedUntil: number | null
   readonly lastTickAt: number | null
+}
+
+export interface RunningAgentInfo {
+  readonly id: string
+  readonly role: AgentPoolRole | null
+  readonly kind: HarnessKind
+  readonly model: string
+  readonly effort: string
 }
 
 export type OrchestratorEvent =
@@ -81,6 +97,8 @@ const RETRY_BASE_MS = 10_000
 
 interface RunningEntry {
   readonly issue: Issue
+  readonly agent: RunningAgentInfo
+  readonly processPid: number | null
   readonly startedAt: number
   readonly turn: number
   readonly latestTool: string | null
@@ -132,6 +150,7 @@ export const OrchestratorLive = (
 
       const state = yield* Ref.make<State>(initialState())
       const events = yield* PubSub.unbounded<OrchestratorEvent>()
+      const primaryAgent = primaryAgentInfo(settings)
 
       const isActive = (s: string) =>
         settings.tracker.activeStates.some(
@@ -204,11 +223,26 @@ export const OrchestratorLive = (
                 template: promptTemplate,
                 issue: currentIssue,
                 attempt: turn === 1 ? (attempt > 1 ? attempt : null) : turn,
+                agent: primaryAgent,
               })
+              const delegateTask = makeAgentPoolDelegate(
+                settings,
+                ws,
+                currentIssue,
+                turn,
+              )
 
               const onAgentEvent = (event: import("../agent/runner.ts").AgentEvent) =>
                 Effect.gen(function* () {
-                  if (event._tag === "tool_call") {
+                  if (event._tag === "process_started") {
+                    yield* Ref.update(state, (s) => ({
+                      ...s,
+                      running: HashMap.modify(s.running, currentIssue.id, (e) => ({
+                        ...e,
+                        processPid: event.pid,
+                      })),
+                    }))
+                  } else if (event._tag === "tool_call") {
                     yield* Ref.update(state, (s) => ({
                       ...s,
                       running: HashMap.modify(s.running, currentIssue.id, (e) => ({
@@ -284,7 +318,7 @@ export const OrchestratorLive = (
 
               const result = yield* agent
                 .run(
-                  { workspace: ws, issue: currentIssue, prompt, turnNumber: turn },
+                  { workspace: ws, issue: currentIssue, prompt, turnNumber: turn, delegateTask },
                   onAgentEvent,
                 )
                 .pipe(Effect.either)
@@ -422,6 +456,8 @@ export const OrchestratorLive = (
             claimed: HashSet.add(s.claimed, issue.id),
             running: HashMap.set(s.running, issue.id, {
               issue,
+              agent: primaryAgent,
+              processPid: null,
               startedAt: Date.now(),
               turn: 1,
               latestTool: null,
@@ -555,6 +591,8 @@ export const OrchestratorLive = (
             identifier: e.issue.identifier,
             title: e.issue.title,
             state: e.issue.state,
+            agent: e.agent,
+            processPid: e.processPid,
             startedAt: e.startedAt,
             turn: e.turn,
             latestTool: e.latestTool,
@@ -595,6 +633,161 @@ function sortForDispatch(issues: ReadonlyArray<Issue>): ReadonlyArray<Issue> {
     const bt = b.updatedAt ?? ""
     return at < bt ? -1 : at > bt ? 1 : 0
   })
+}
+
+function primaryAgentInfo(settings: Settings): RunningAgentInfo {
+  const primary = settings.agentPool.primaryAgent
+    ? settings.agentPool.members.find(
+        (member) => member.id === settings.agentPool.primaryAgent,
+      )
+    : undefined
+  return {
+    id: primary?.id ?? settings.runtime.kind,
+    role: primary?.role ?? null,
+    kind: primary?.kind ?? settings.runtime.kind,
+    model: primary?.model ?? settings.runtime.common.model ?? settings.runtime.kind,
+    effort: primary?.effort ?? settings.runtime.common.effort ?? "default",
+  }
+}
+
+function makeAgentPoolDelegate(
+  settings: Settings,
+  workspace: Workspace,
+  issue: Issue,
+  turnNumber: number,
+): AgentTaskDelegate {
+  return async (request) => {
+    const member = selectAgentPoolMember(settings, request)
+    if (!member) {
+      throw new Error(`No agent pool member matched delegation request`)
+    }
+
+    const maxOutputChars = request.maxOutputChars ?? member.maxOutputChars
+    const memberSettings = settingsForPoolMember(settings, member)
+    const harness = makeHarness(memberSettings)
+    const result = await Effect.runPromise(
+      harness.run({
+        workspace,
+        issue,
+        prompt: buildDelegatedAgentPrompt(member, issue, request),
+        turnNumber,
+      }),
+    )
+    return {
+      agentId: member.id,
+      status: result.status,
+      output: truncate(result.finalText ?? "", maxOutputChars),
+      sessionId: result.sessionId,
+      threadId: result.threadId,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      totalTokens: result.totalTokens,
+    } satisfies AgentTaskResult
+  }
+}
+
+function selectAgentPoolMember(
+  settings: Settings,
+  request: AgentTaskRequest,
+): Settings["agentPool"]["members"][number] | undefined {
+  if (request.agentId) {
+    return settings.agentPool.members.find((candidate) => candidate.id === request.agentId)
+  }
+
+  const requestedRole = request.role ?? "soloist"
+  const requestedCapabilities = request.capabilities ?? []
+  return settings.agentPool.members.find((candidate) => {
+    if (candidate.role !== requestedRole) return false
+    return requestedCapabilities.every((capability) =>
+      candidate.capabilities.includes(capability),
+    )
+  })
+}
+
+function settingsForPoolMember(
+  settings: Settings,
+  member: Settings["agentPool"]["members"][number],
+): Settings {
+  return {
+    ...settings,
+    runtime: {
+      ...settings.runtime,
+      kind: member.kind,
+      common: {
+        ...settings.runtime.common,
+        model: member.model,
+        effort: member.effort,
+        permissionMode: member.permissionMode,
+        allowedTools: member.allowedTools,
+        disallowedTools: member.disallowedTools,
+        cwd: member.cwd ?? settings.runtime.common.cwd,
+        turnTimeoutMs: member.timeoutMs,
+        env: {
+          ...(settings.runtime.common.env ?? {}),
+          ...(member.env ?? {}),
+        },
+      },
+      claude: member.claude,
+      codex: {
+        ...member.codex,
+        sandboxPolicy: member.codex.sandboxPolicy ?? "readOnly",
+      },
+      gemini: member.gemini,
+      opencode: member.opencode,
+    },
+    agentPool: {
+      ...settings.agentPool,
+      members: [],
+    },
+  }
+}
+
+function buildDelegatedAgentPrompt(
+  member: Settings["agentPool"]["members"][number],
+  issue: Issue,
+  request: AgentTaskRequest,
+): string {
+  const files =
+    request.files && request.files.length > 0
+      ? request.files.map((file) => `- ${file}`).join("\n")
+      : "- No specific files supplied. Inspect only what is needed."
+
+  return [
+    "You are a Beethoven delegated agent handling a substantial work package.",
+    "",
+    "You are not the primary owner for this Linear issue. Do not commit, push, merge, create PRs, edit tracker state, or make durable file changes unless the task explicitly asks for a patch. Prefer read-only investigation and concise advice.",
+    "",
+    `Agent: ${member.id}`,
+    `Role: ${member.role}`,
+    member.capabilities.length > 0
+      ? `Capabilities: ${member.capabilities.join(", ")}`
+      : null,
+    `Harness: ${member.kind}`,
+    member.model ? `Model: ${member.model}` : null,
+    member.effort ? `Effort: ${member.effort}` : null,
+    member.instructions ? `Instructions:\n${member.instructions}` : null,
+    "",
+    "Issue:",
+    `- ${issue.identifier}: ${issue.title}`,
+    issue.url ? `- URL: ${issue.url}` : null,
+    issue.description ? `- Description:\n${issue.description}` : null,
+    "",
+    "Task:",
+    request.task,
+    request.context ? `\nContext:\n${request.context}` : null,
+    "",
+    "Relevant files or directories:",
+    files,
+    request.outputFormat ? `\nReturn format:\n${request.outputFormat}` : null,
+    "",
+    "Return only the answer needed by the primary agent. Include blockers or uncertainty explicitly.",
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n")
+}
+
+function truncate(value: string, maxChars: number): string {
+  return value.length > maxChars ? value.slice(0, maxChars) + "\n[truncated]" : value
 }
 
 // AWS-classic decorrelated jitter: prev = min(cap, randomBetween(base, prev * 3)).

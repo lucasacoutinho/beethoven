@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
 import type { Settings } from "../../config/schema.ts"
+import type { AgentRunInput } from "../harness.ts"
+import { DELEGATE_TASK_TOOL } from "../../tools/delegate-task.ts"
 import { LINEAR_GRAPHQL_TOOL } from "../../tools/linear-graphql.ts"
 import {
   CLAUDE_BEETHOVEN_MCP_SERVER,
@@ -10,12 +12,13 @@ import {
 
 describe("Claude tool adapter", () => {
   test("registers Beethoven tools as an in-process SDK MCP server", async () => {
-    const servers = claudeBeethovenMcpServers(makeSettings())
+    const settings = makeSettings()
+    const servers = claudeBeethovenMcpServers(settings, makeInput())
     const server = servers[CLAUDE_BEETHOVEN_MCP_SERVER]
 
     expect(server?.type).toBe("sdk")
     expect(serverName(server)).toBe(CLAUDE_BEETHOVEN_MCP_SERVER)
-    expect(claudeBeethovenToolNames()).toContain(
+    expect(claudeBeethovenToolNames(settings)).toContain(
       `mcp__${CLAUDE_BEETHOVEN_MCP_SERVER}__${LINEAR_GRAPHQL_TOOL}`,
     )
 
@@ -32,6 +35,88 @@ describe("Claude tool adapter", () => {
       type: "text",
     })
     expect(result?.content?.[0]?.text).toContain("Beethoven is missing Linear auth")
+  })
+
+  test("registers delegate_task only when agent pool members are configured", async () => {
+    const settings = makeSettings({
+      agentPool: {
+        primaryAgent: undefined,
+        primaryFallbackRoles: ["maestro"],
+        onPrimaryUnavailable: "reassign",
+        members: [
+        {
+          id: "codex-gpt-5.4-soloist",
+          role: "soloist",
+          capabilities: ["diff-review"],
+          kind: "codex",
+          model: "gpt-5.4",
+          effort: "medium",
+          instructions: undefined,
+          cwd: undefined,
+          timeoutMs: 60_000,
+          maxOutputChars: 4_000,
+          permissionMode: undefined,
+          allowedTools: undefined,
+          disallowedTools: undefined,
+          env: undefined,
+          claude: {
+            thinkingMode: undefined,
+            thinkingBudgetTokens: undefined,
+            executable: undefined,
+            skillsPath: ".claude/skills",
+          },
+          codex: {
+            command: undefined,
+            approvalPolicy: undefined,
+            autoApproveRequests: false,
+            threadSandbox: "workspace-write",
+            turnSandboxPolicy: undefined,
+            sandboxPolicy: "readOnly",
+            personality: undefined,
+            skillsPath: ".codex/skills",
+          },
+          gemini: {
+            includeDirectories: undefined,
+            executable: undefined,
+            skillsPath: ".gemini/skills",
+          },
+          opencode: {
+            provider: undefined,
+            attachUrl: undefined,
+            resumeSession: undefined,
+            executable: undefined,
+            skillsPath: ".agents/skills",
+          },
+        },
+        ],
+      },
+    })
+    const servers = claudeBeethovenMcpServers(settings, {
+      ...makeInput(),
+      delegateTask: async (request) => ({
+        agentId: request.agentId ?? "codex-gpt-5.4-soloist",
+        status: "completed",
+        output: "soloist result",
+        sessionId: null,
+        threadId: null,
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      }),
+    })
+    const tools = registeredTools(servers[CLAUDE_BEETHOVEN_MCP_SERVER])
+
+    expect(Object.keys(tools)).toContain(DELEGATE_TASK_TOOL)
+    expect(claudeBeethovenToolNames(settings)).toContain(
+      `mcp__${CLAUDE_BEETHOVEN_MCP_SERVER}__${DELEGATE_TASK_TOOL}`,
+    )
+
+    const result = await tools[DELEGATE_TASK_TOOL]?.handler(
+      { agent: "codex-gpt-5.4-soloist", task: "Inspect the diff." },
+      {},
+    )
+    expect(result?.isError).toBe(false)
+    expect(result?.content?.[0]?.text).toContain("soloist result")
   })
 })
 
@@ -66,7 +151,7 @@ function serverName(server: unknown): string | undefined {
     : undefined
 }
 
-function makeSettings(): Settings {
+function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     tracker: {
       kind: "linear",
@@ -135,5 +220,34 @@ function makeSettings(): Settings {
         skillsPath: ".agents/skills",
       },
     },
+    agentPool: {
+      primaryAgent: undefined,
+      primaryFallbackRoles: ["maestro"],
+      onPrimaryUnavailable: "reassign",
+      members: [],
+    },
+    ...overrides,
+  }
+}
+
+function makeInput(): AgentRunInput {
+  return {
+    workspace: { path: "/tmp/beethoven-test", workspaceKey: "BLE-1", createdNow: true },
+    issue: {
+      id: "issue-1",
+      identifier: "BLE-1",
+      title: "Claude tool adapter test",
+      description: null,
+      priority: null,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: null,
+      updatedAt: null,
+    },
+    prompt: "Run the Claude tool adapter test.",
+    turnNumber: 1,
   }
 }

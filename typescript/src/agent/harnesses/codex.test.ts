@@ -269,6 +269,12 @@ function makeSettings(
         skillsPath: ".agents/skills",
       },
     },
+    agentPool: {
+      primaryAgent: undefined,
+      primaryFallbackRoles: ["maestro"],
+      onPrimaryUnavailable: "reassign",
+      members: [],
+    },
   }
 }
 

@@ -23,8 +23,8 @@
     "codex",
     "harness",
     "linear",
-    "orchestration",
-    "symphony"
+    "multi-agent",
+    "orchestration"
   ],
   "bin": {
     "beethoven": "./src/cli/main.tsx"
@@ -35,7 +35,7 @@
     "validate": "bun src/cli/main.tsx validate",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build --compile --target=bun --define 'process.env.DEV=\"false\"' --outfile dist/beethoven src/cli/main.tsx"
+    "build": "bun build --compile --target=bun --define 'process.env.DEV=\"false\"' --outfile dist/beethoven src/cli/main.tsx && ln -sf beethoven dist/bethoveen"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.126",

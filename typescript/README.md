@@ -103,9 +103,9 @@ agent:
   max_concurrent_agents: 5
   max_turns: 20
 runtime:
-  kind: claude        # claude | codex | gemini | opencode
-  model: claude-opus-4-7
-  effort: high        # low | medium | high | xhigh | max
+  kind: codex         # claude | codex | gemini | opencode
+  model: gpt-5.5
+  effort: xhigh       # low | medium | high | xhigh | max
   permission_mode: acceptEdits
   cwd: "."
   turn_timeout_ms: 3600000
@@ -113,16 +113,45 @@ runtime:
   # Per-harness extension blocks (only the one matching `kind` is applied):
   claude:
     thinking_mode: adaptive
-  # codex:
-  #   command: codex app-server
-  #   approval_policy: onRequest      # never | unlessTrusted | onRequest | Codex policy object
-  #   auto_approve_requests: false
-  #   thread_sandbox: workspace-write
-  #   sandbox_policy: workspaceWrite  # readOnly | workspaceWrite | dangerFullAccess | externalSandbox
-  #   # turn_sandbox_policy accepts the raw Codex app-server sandbox policy object.
-  #   # turn_sandbox_policy:
-  #   #   type: workspaceWrite
-  #   #   writableRoots: [/absolute/workspace/path]
+  codex:
+    # command can be omitted; Beethoven injects runtime.model and runtime.effort
+    # into the default `codex app-server` command via Codex config overrides.
+    approval_policy: onRequest      # never | unlessTrusted | onRequest | Codex policy object
+    auto_approve_requests: false
+    thread_sandbox: workspace-write
+    sandbox_policy: workspaceWrite  # readOnly | workspaceWrite | dangerFullAccess | externalSandbox
+
+agent_pool:
+  primary_agent: codex-gpt-5.5-maestro
+  primary_fallback_roles: [maestro]
+  on_primary_unavailable: reassign # reassign | pause | fail
+  members:
+    - id: codex-gpt-5.5-maestro
+      role: maestro
+      capabilities: [implementation, review, github]
+      kind: codex
+      model: gpt-5.5
+      effort: xhigh
+      codex:
+        sandbox_policy: workspaceWrite
+    - id: codex-gpt-5.4-mini-accompanist
+      role: accompanist
+      capabilities: [ci-triage, branch-analysis, docs]
+      kind: codex
+      model: gpt-5.4-mini
+      effort: low
+      instructions: "Use for CI failure investigation and branch analysis."
+      codex:
+        sandbox_policy: readOnly
+    - id: codex-gpt-5.4-soloist
+      role: soloist
+      capabilities: [implementation, review, risk-check]
+      kind: codex
+      model: gpt-5.4
+      effort: medium
+      instructions: "Use for independent design review before handoff."
+      codex:
+        sandbox_policy: readOnly
   # gemini:
   #   include_directories: []
   # opencode:
@@ -131,6 +160,14 @@ runtime:
 
 The Markdown body below the YAML is the per-issue prompt template (Liquid syntax,
 same as Symphony's). See `WORKFLOW.example.md`.
+
+When `agent_pool.members` is non-empty, Beethoven exposes a `delegate_task`
+tool to the primary harness. The primary model remains responsible for the
+issue, but can ask a configured pool member by `agent`, `role`, and
+`capabilities` to handle substantial work packages such as CI failure
+investigation, branch analysis, independent review, or implementation slices.
+Delegated runs use the same workspace, have nested delegation disabled, and can
+use cheaper or lower-effort models than the primary run.
 
 ### Skills layout
 

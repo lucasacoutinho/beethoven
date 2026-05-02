@@ -52,10 +52,10 @@ export const makeClaudeHarness = (settings: Settings): Harness => {
       ...(common.mcpServers
         ? (common.mcpServers as NonNullable<Options["mcpServers"]>)
         : {}),
-      ...claudeBeethovenMcpServers(settings),
+      ...claudeBeethovenMcpServers(settings, input),
     }
     const allowedTools = common.allowedTools
-      ? Array.from(new Set([...common.allowedTools, ...claudeBeethovenToolNames()]))
+      ? Array.from(new Set([...common.allowedTools, ...claudeBeethovenToolNames(settings)]))
       : undefined
 
     return {
@@ -272,6 +272,8 @@ export const makeClaudeHarness = (settings: Settings): Harness => {
 
 function mergeEvent(prev: AgentRunResult, event: AgentEvent): AgentRunResult {
   switch (event._tag) {
+    case "process_started":
+      return prev
     case "session_started":
       return {
         ...prev,

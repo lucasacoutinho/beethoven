@@ -31,6 +31,7 @@ import {
   beethovenToolDefinitions,
   executeBeethovenTool,
 } from "../../tools/index.ts"
+import type { ToolExecutionContext } from "../../tools/tool.ts"
 import { toCodexDynamicTools } from "./codex-tools.ts"
 
 const KIND: HarnessKind = "codex"
@@ -113,6 +114,7 @@ interface JsonRpcMessage {
 interface CodexSession {
   readonly transport: CodexTransport
   readonly settings: Settings
+  readonly input: AgentRunInput
   readonly cwd: string
   readonly approvalPolicy: unknown
   readonly threadSandbox: string
@@ -122,6 +124,7 @@ interface CodexSession {
 
 interface CodexTransport {
   readonly reader: JsonLineReader
+  readonly pid: number | null
   readonly send: (message: Record<string, unknown>) => void
   readonly close: () => void
 }
@@ -140,6 +143,12 @@ export const makeCodexHarness = (settings: Settings): Harness => {
         let session: CodexSession | null = null
         try {
           session = await startSession(settings, input)
+          if (session.transport.pid !== null) {
+            await emit.single({
+              _tag: "process_started",
+              pid: session.transport.pid,
+            })
+          }
           const threadId = await startThread(session)
           const turnId = await startTurn(session, threadId, input)
           await emit.single({
@@ -213,7 +222,7 @@ async function startSession(
   input: AgentRunInput,
 ): Promise<CodexSession> {
   const cwd = path.resolve(input.workspace.path, settings.runtime.common.cwd)
-  const command = settings.runtime.codex.command ?? "codex app-server"
+  const command = settings.runtime.codex.command ?? defaultCodexCommand(settings)
   const shell = Bun.which("bash") ?? Bun.which("sh") ?? "sh"
   const env = {
     ...Bun.env,
@@ -225,6 +234,7 @@ async function startSession(
   const session: CodexSession = {
     transport,
     settings,
+    input,
     cwd,
     approvalPolicy: toCodexApprovalPolicy(settings),
     threadSandbox: settings.runtime.codex.threadSandbox,
@@ -252,6 +262,24 @@ async function startSession(
   return session
 }
 
+function defaultCodexCommand(settings: Settings): string {
+  const common = settings.runtime.common
+  const config: string[] = []
+  if (common.model) config.push(`model=${JSON.stringify(common.model)}`)
+  if (common.effort) {
+    config.push(`model_reasoning_effort=${JSON.stringify(toCodexReasoningEffort(common.effort))}`)
+  }
+
+  const configArgs = config.map((value) => `-c ${shellQuote(value)}`).join(" ")
+  return configArgs ? `codex ${configArgs} app-server` : "codex app-server"
+}
+
+function toCodexReasoningEffort(
+  effort: NonNullable<Settings["runtime"]["common"]["effort"]>,
+): string {
+  return effort === "max" ? "xhigh" : effort
+}
+
 async function startThread(session: CodexSession): Promise<string> {
   send(session, {
     id: THREAD_START_ID,
@@ -260,7 +288,7 @@ async function startThread(session: CodexSession): Promise<string> {
       approvalPolicy: session.approvalPolicy,
       sandbox: session.threadSandbox,
       cwd: session.cwd,
-      dynamicTools: toCodexDynamicTools(beethovenToolDefinitions()),
+      dynamicTools: toCodexDynamicTools(beethovenToolDefinitions(session.settings)),
     },
   })
 
@@ -489,6 +517,7 @@ async function handleApproval(
       session.settings,
       toolName,
       toolCallArguments(params),
+      toolContext(session.input),
     )
     send(session, { id, result })
     await emit.single({
@@ -501,6 +530,15 @@ async function handleApproval(
   }
 
   return false
+}
+
+function toolContext(input: AgentRunInput): ToolExecutionContext {
+  return {
+    workspace: input.workspace,
+    issue: input.issue,
+    prompt: input.prompt,
+    ...(input.delegateTask ? { delegateTask: input.delegateTask } : {}),
+  }
 }
 
 function toolInputAnswers(
@@ -621,6 +659,7 @@ async function startCodexTransport(
 
   return {
     reader,
+    pid: typeof bridge.pid === "number" ? bridge.pid : null,
     send: (message) => {
       appendFileSync(inputPath, `${JSON.stringify(message)}\n`)
     },
@@ -653,6 +692,8 @@ async function waitForBridgeReady(
 
 function mergeEvent(prev: AgentRunResult, event: AgentEvent): AgentRunResult {
   switch (event._tag) {
+    case "process_started":
+      return prev
     case "session_started":
       return {
         ...prev,
@@ -901,6 +942,10 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
 }
 
 class FileLineReader implements JsonLineReader {

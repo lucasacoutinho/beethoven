@@ -22,15 +22,31 @@ describe("WORKFLOW.example.md", () => {
         template: workflow.promptTemplate,
         issue: exampleIssue,
         attempt: 2,
+        agent: {
+          id: "codex-gpt-5.5-maestro",
+          role: "maestro",
+          kind: "codex",
+          model: "gpt-5.5",
+          effort: "xhigh",
+        },
       }),
     )
 
-    expect(settings.runtime.kind).toBe("claude")
+    expect(settings.runtime.kind).toBe("codex")
+    expect(settings.runtime.common.model).toBe("gpt-5.5")
+    expect(settings.runtime.common.effort).toBe("xhigh")
+    expect(settings.agentPool.primaryAgent).toBe("codex-gpt-5.5-maestro")
+    expect(settings.agentPool.members.map((member) => member.id)).toEqual([
+      "codex-gpt-5.5-maestro",
+      "codex-gpt-5.4-mini-accompanist",
+      "codex-gpt-5.4-soloist",
+    ])
     expect(settings.tracker.projectSlug).toBe("your-project-slug")
     expect(prompt).toContain("Linear ticket `BLE-123`")
     expect(prompt).toContain("This is continuation attempt #2")
     expect(prompt).toContain("## Beethoven Workpad")
     expect(prompt).toContain("Use Linear MCP or the `linear_graphql` tool only when tracker state must be read or updated")
+    expect(prompt).toContain("Use `delegate_task` only for substantial work packages")
   })
 })
 

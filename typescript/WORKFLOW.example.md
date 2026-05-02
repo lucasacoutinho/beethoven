@@ -35,11 +35,11 @@ agent:
   max_turns: 20
 runtime:
   # kind picks the harness. V1 supports: claude, codex (working), gemini/opencode (stubs).
-  kind: claude
+  kind: codex
 
   # Common knobs (apply to whichever harness you pick — each may ignore some):
-  model: claude-opus-4-7
-  effort: high              # low | medium | high | xhigh | max
+  model: gpt-5.5
+  effort: xhigh             # low | medium | high | xhigh | max
   permission_mode: acceptEdits  # default | acceptEdits | bypassPermissions
   cwd: "."
   turn_timeout_ms: 3600000
@@ -51,17 +51,18 @@ runtime:
     # thinking_budget_tokens: 8000  # only needed when thinking_mode = enabled
     # executable: $CLAUDE_BIN       # override Bun.which("claude") auto-detect
 
-  # codex:
-  #   command: codex app-server
-  #   approval_policy: onRequest      # never | unlessTrusted | onRequest | Codex policy object
-  #   auto_approve_requests: false
-  #   thread_sandbox: workspace-write
-  #   sandbox_policy: workspaceWrite  # readOnly | workspaceWrite | dangerFullAccess | externalSandbox
-  #   # turn_sandbox_policy accepts the raw Codex app-server sandbox policy object.
-  #   # turn_sandbox_policy:
-  #   #   type: workspaceWrite
-  #   #   writableRoots: [/absolute/workspace/path]
-  #   personality: friendly
+  codex:
+    # When command is omitted, Beethoven starts:
+    # codex -c 'model="<runtime.model>"' -c 'model_reasoning_effort="<runtime.effort>"' app-server
+    approval_policy: onRequest      # never | unlessTrusted | onRequest | Codex policy object
+    auto_approve_requests: false
+    thread_sandbox: workspace-write
+    sandbox_policy: workspaceWrite  # readOnly | workspaceWrite | dangerFullAccess | externalSandbox
+    # turn_sandbox_policy accepts the raw Codex app-server sandbox policy object.
+    # turn_sandbox_policy:
+    #   type: workspaceWrite
+    #   writableRoots: [/absolute/workspace/path]
+    personality: friendly
 
   # gemini:
   #   include_directories: [./apps, ./lib]
@@ -70,6 +71,46 @@ runtime:
   #   provider: anthropic
   #   attach_url: http://localhost:4096
   #   resume_session: <id>
+
+agent_pool:
+  # Optional. When set, this pool member owns top-level issue runs instead of
+  # the legacy runtime block above.
+  primary_agent: codex-gpt-5.5-maestro
+  primary_fallback_roles: [maestro]
+  on_primary_unavailable: reassign # reassign | pause | fail
+  members:
+    - id: codex-gpt-5.5-maestro
+      role: maestro
+      capabilities: [implementation, review, github]
+      kind: codex
+      model: gpt-5.5
+      effort: xhigh
+      timeout_ms: 3600000
+      max_output_chars: 20000
+      codex:
+        sandbox_policy: workspaceWrite
+    - id: codex-gpt-5.4-mini-accompanist
+      role: accompanist
+      capabilities: [ci-triage, branch-analysis, docs]
+      kind: codex
+      model: gpt-5.4-mini
+      effort: low
+      timeout_ms: 600000
+      max_output_chars: 12000
+      instructions: "Use for CI failure investigation, branch analysis, docs checks, and other independently reviewable work packages."
+      codex:
+        sandbox_policy: readOnly
+    - id: codex-gpt-5.4-soloist
+      role: soloist
+      capabilities: [implementation, review, risk-check]
+      kind: codex
+      model: gpt-5.4
+      effort: medium
+      timeout_ms: 900000
+      max_output_chars: 16000
+      instructions: "Use for independent design review or risk checks before final handoff."
+      codex:
+        sandbox_policy: readOnly
 ---
 
 You are working on Linear ticket `{{ issue.identifier }}`.
@@ -104,7 +145,12 @@ No description was provided.
 2. Do not ask a human to do routine follow-up work. Stop only for true blockers such as missing auth, missing secrets, or unavailable required services.
 3. Keep all durable progress in a single Linear workpad comment headed `## Beethoven Workpad`.
 4. Use Linear MCP or the `linear_graphql` tool only when tracker state must be read or updated. Do not load or call MCP tools speculatively.
-5. Work only inside the provided workspace directory. Do not modify files outside it.
+5. Use `delegate_task` only for substantial work packages that benefit from a separate pool member. Do not delegate one-file lookups, simple grep/read tasks, or work the primary agent can do faster inline. Keep the primary agent responsible for the final plan, edits, validation, and handoff.
+6. Keep external labels current for visibility:
+   - Linear issue labels should include `beethoven`, `agent:{{ agent.id }}`, and `model:{{ agent.model }}`.
+   - GitHub PR labels should include `beethoven`, `agent:{{ agent.id }}`, and `model:{{ agent.model }}` when a PR exists.
+   - If label creation/application is unavailable, record the missing labels and reason in the workpad.
+7. Work only inside the provided workspace directory. Do not modify files outside it.
 
 ## Status Routing
 
@@ -143,6 +189,7 @@ Find or create exactly one active workpad comment with this marker:
 Keep that comment current throughout the run. It should contain:
 
 - Environment stamp: `<host>:<absolute-workdir>@<short-sha>`.
+- External labels: `beethoven`, `agent:{{ agent.id }}`, `model:{{ agent.model }}`.
 - Current plan as checkboxes.
 - Acceptance criteria copied or inferred from the issue.
 - Validation checklist with exact commands or manual checks.
@@ -188,7 +235,7 @@ Update the workpad before implementation, after meaningful discoveries, after va
    - no temporary proof edits;
    - no broken docs or examples.
 7. Commit and push only when that is part of this repository's workflow.
-8. Attach or link the PR to the issue when a PR is created.
+8. Attach or link the PR to the issue when a PR is created and apply the external visibility labels to the PR.
 9. Move the issue to the next state only when the completion bar is met.
 
 ## Pull Request Feedback
@@ -268,6 +315,11 @@ Use this structure for the persistent workpad comment and keep it updated in pla
 ```text
 <host>:<absolute-workdir>@<short-sha>
 ```
+
+### External Labels
+
+- Linear: `beethoven`, `agent:{{ agent.id }}`, `model:{{ agent.model }}`
+- GitHub PR: `beethoven`, `agent:{{ agent.id }}`, `model:{{ agent.model }}`
 
 ### Plan
 

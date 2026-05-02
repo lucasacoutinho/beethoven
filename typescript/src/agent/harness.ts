@@ -12,6 +12,8 @@ export interface AgentRunInput {
   readonly turnNumber: number
   /** Optional session ID to resume; semantics are harness-specific. */
   readonly resumeSessionId?: string
+  /** Optional subtask executor exposed to dynamic tools for model delegation. */
+  readonly delegateTask?: AgentTaskDelegate
 }
 
 export interface AgentTokens {
@@ -55,6 +57,31 @@ export interface AgentRunResult extends AgentTokens {
   readonly finalText: string | null
 }
 
+export type AgentPoolRole = "maestro" | "soloist" | "accompanist"
+
+export interface AgentTaskRequest {
+  readonly agentId?: string
+  readonly role?: AgentPoolRole
+  readonly capabilities?: ReadonlyArray<string>
+  readonly task: string
+  readonly context?: string
+  readonly files?: ReadonlyArray<string>
+  readonly outputFormat?: string
+  readonly maxOutputChars?: number
+}
+
+export interface AgentTaskResult extends AgentTokens {
+  readonly agentId: string
+  readonly status: AgentRunResult["status"]
+  readonly output: string
+  readonly sessionId: string | null
+  readonly threadId: string | null
+}
+
+export type AgentTaskDelegate = (
+  request: AgentTaskRequest,
+) => Promise<AgentTaskResult>
+
 /**
  * Normalized event stream emitted by every harness. Shapes are aligned to
  * Vercel AI SDK content-block conventions (TextPart / ToolCallPart /
@@ -64,6 +91,10 @@ export interface AgentRunResult extends AgentTokens {
  * (use `_tag: "raw"` for harness-specific events that don't fit).
  */
 export type AgentEvent =
+  | {
+      readonly _tag: "process_started"
+      readonly pid: number
+    }
   | {
       readonly _tag: "session_started"
       readonly sessionId: string | null

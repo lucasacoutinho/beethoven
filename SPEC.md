@@ -468,7 +468,6 @@ fields they do not support):
   - Pass-through MCP server configuration. Schema is harness-specific.
 - `env` (map of strings, OPTIONAL)
   - Extra environment variables for the harness subprocess.
-
 Per-harness extension blocks (each OPTIONAL; only the block matching `kind`
 is applied):
 
@@ -485,9 +484,12 @@ is applied):
 ##### 5.3.6.2 `runtime.codex`
 
 - `command` (string, OPTIONAL)
-  - Default: `codex app-server`. Launched via `bash -lc` in the workspace
-    directory; the launched process MUST speak the app-server protocol over
-    stdio.
+  - Default: `codex app-server`, with implementation-defined config
+    overrides for `runtime.model` and `runtime.effort` when set. The
+    TypeScript implementation launches
+    `codex -c 'model="<model>"' -c 'model_reasoning_effort="<effort>"' app-server`.
+    Launched via `bash -lc` in the workspace directory; the launched process
+    MUST speak the app-server protocol over stdio.
 - `approval_policy` (string, OPTIONAL)
   - One of `never`, `unlessTrusted`, `onRequest`. Default
     implementation-defined.
@@ -552,6 +554,72 @@ stream. The minimal vocabulary:
 
 Adapters MAY drop events that don't fit the vocabulary (use `raw` for
 cross-checking) but MUST NOT invent new top-level event tags.
+
+##### 5.3.7 `agent_pool` (object)
+
+The `agent_pool` block defines the concrete model/harness members Beethoven may
+use for top-level issue ownership and delegated work packages. This avoids
+binding workflow semantics directly to one model such as `claude-opus-4-7` or
+`gpt-5.5`.
+
+Fields:
+
+- `primary_agent` (string, OPTIONAL)
+  - Pool member `id` preferred for top-level issue ownership.
+  - When set, this member overrides the legacy top-level `runtime.kind`,
+    `runtime.model`, `runtime.effort`, and per-harness settings for primary
+    dispatch.
+- `primary_fallback_roles` (list of strings, OPTIONAL)
+  - Roles eligible to take over a top-level issue if the preferred primary is
+    unavailable. Default: `["maestro"]`.
+- `on_primary_unavailable` (string, OPTIONAL)
+  - One of `reassign`, `pause`, `fail`. Default: `reassign`.
+  - Reassignment MUST happen only between turns or after startup/rate-limit
+    failure, not mid-turn.
+- `members` (list of objects, OPTIONAL)
+  - Concrete harness/model entries available to the scheduler.
+
+Each pool member has:
+
+- `id` (string, REQUIRED)
+  - Stable identifier used by `primary_agent` and optional `delegate_task.agent`.
+- `role` (string, REQUIRED)
+  - One of `maestro`, `soloist`, `accompanist`.
+  - `maestro` members may own top-level issues. `soloist` members handle
+    substantial delegated work packages. `accompanist` members handle fast,
+    low-cost supporting work.
+- `capabilities` (list of strings, OPTIONAL)
+  - Scheduler hints such as `code-review`, `ci-triage`, `github`,
+    `implementation`, or `docs`.
+- `kind` (string, REQUIRED)
+  - One of `claude`, `codex`, `gemini`, `opencode`.
+- `model` (string, OPTIONAL)
+  - Harness-native model identifier for the pool member.
+- `effort` (string, OPTIONAL)
+  - One of `low`, `medium`, `high`, `xhigh`, `max`.
+- `instructions` (string, OPTIONAL)
+  - Extra role guidance appended to delegated prompts.
+- `cwd` (string, OPTIONAL)
+  - Overrides the primary runtime `cwd` for this member.
+- `timeout_ms` (positive integer, OPTIONAL)
+  - Default: `600000`.
+- `max_output_chars` (positive integer, OPTIONAL)
+  - Default: `12000`.
+- `permission_mode`, `allowed_tools`, `disallowed_tools`, `env`
+  - Same meaning as top-level runtime fields, scoped to this member.
+- Per-harness extension blocks (`claude`, `codex`, `gemini`, `opencode`)
+  - Same schema as the matching top-level per-harness block.
+
+Delegated work packages are requested through `delegate_task`. Callers SHOULD
+specify required `role`, `capabilities`, or a concrete `agent` id; the
+scheduler selects an available pool member. Delegation is for substantial work
+packages such as CI failure investigation, branch revival analysis,
+independent review, or implementation slices. It is not for one-file lookups,
+simple grep/read tasks, or microtasks the primary agent can do faster inline.
+
+Implementations MUST disable nested delegation for delegated pool-member runs.
+The workspace and workpad remain the continuity layer when top-level ownership
+is reassigned between maestros.
 
 ### 5.4 Prompt Template Contract
 
@@ -686,12 +754,13 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
-- `codex.command`: shell command string, default `codex app-server`
+- `codex.command`: shell command string, default `codex app-server` plus model/effort config overrides when set
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.auto_approve_requests`: boolean, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
 - `codex.turn_timeout_ms`: integer, default `3600000`
+- `agent_pool.members`: list of pool members, default `[]`
 - `codex.read_timeout_ms`: integer, default `5000`
 - `codex.stall_timeout_ms`: integer, default `300000`
 
@@ -1065,7 +1134,8 @@ Subprocess launch parameters:
 
 Notes:
 
-- The default command is `codex app-server`.
+- The default command is `codex app-server`, with model/effort supplied through Codex config
+  overrides when `runtime.model` or `runtime.effort` is set.
 - Approval policy, sandbox policy, cwd, prompt input, and OPTIONAL tool declarations are supplied
   using fields supported by the targeted Codex app-server version.
 
@@ -2212,7 +2282,8 @@ Use the same validation profiles as Section 17:
 - Workspace lifecycle hooks (`after_create`, `before_run`, `after_run`, `before_remove`)
 - Hook timeout config (`hooks.timeout_ms`, default `60000`)
 - Coding-agent app-server subprocess client with JSON line protocol
-- Codex launch command config (`codex.command`, default `codex app-server`)
+- Codex launch command config (`codex.command`, default `codex app-server` plus model/effort overrides)
+- Optional agent pool exposed through `delegate_task`
 - Strict prompt rendering with `issue` and `attempt` variables
 - Exponential retry queue with continuation retries after normal exit
 - Configurable retry backoff cap (`agent.max_retry_backoff_ms`, default 5m)
