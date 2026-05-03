@@ -7,7 +7,7 @@ import { DEFAULT_SKILLS_PATHS } from "../agent/harness.ts"
 export class ConfigParseError extends Data.TaggedError("ConfigParseError")<{
   readonly issues: ReadonlyArray<string>
   readonly cause: unknown
-}> {}
+}> { }
 
 const TrackerSchema = Schema.Struct({
   kind: Schema.Literal("linear"),
@@ -101,6 +101,10 @@ const RuntimeGeminiSchema = Schema.Struct({
   include_directories: Schema.optional(Schema.Array(Schema.String)),
   executable: Schema.optional(Schema.String),
   skills_path: Schema.optional(Schema.String),
+  sandbox: Schema.optional(Schema.Boolean),
+  skip_trust: Schema.optional(Schema.Boolean),
+  policies: Schema.optional(Schema.Array(Schema.String)),
+  admin_policies: Schema.optional(Schema.Array(Schema.String)),
 })
 
 const RuntimeOpencodeSchema = Schema.Struct({
@@ -280,17 +284,17 @@ export interface Settings {
     readonly common: {
       readonly model: string | undefined
       readonly permissionMode:
-        | "default"
-        | "acceptEdits"
-        | "bypassPermissions"
-        | undefined
+      | "default"
+      | "acceptEdits"
+      | "bypassPermissions"
+      | undefined
       readonly effort:
-        | "low"
-        | "medium"
-        | "high"
-        | "xhigh"
-        | "max"
-        | undefined
+      | "low"
+      | "medium"
+      | "high"
+      | "xhigh"
+      | "max"
+      | undefined
       readonly allowedTools: ReadonlyArray<string> | undefined
       readonly disallowedTools: ReadonlyArray<string> | undefined
       readonly cwd: string
@@ -309,21 +313,21 @@ export interface Settings {
     readonly codex: {
       readonly command: string | undefined
       readonly approvalPolicy:
-        | "never"
-        | "unlessTrusted"
-        | "onRequest"
-        | string
-        | Record<string, unknown>
-        | undefined
+      | "never"
+      | "unlessTrusted"
+      | "onRequest"
+      | string
+      | Record<string, unknown>
+      | undefined
       readonly autoApproveRequests: boolean
       readonly threadSandbox: string
       readonly turnSandboxPolicy: Record<string, unknown> | undefined
       readonly sandboxPolicy:
-        | "readOnly"
-        | "workspaceWrite"
-        | "dangerFullAccess"
-        | "externalSandbox"
-        | undefined
+      | "readOnly"
+      | "workspaceWrite"
+      | "dangerFullAccess"
+      | "externalSandbox"
+      | undefined
       readonly personality: string | undefined
       readonly skillsPath: string
     }
@@ -331,6 +335,10 @@ export interface Settings {
       readonly includeDirectories: ReadonlyArray<string> | undefined
       readonly executable: string | undefined
       readonly skillsPath: string
+      readonly sandbox: boolean | undefined
+      readonly skipTrust: boolean | undefined
+      readonly policies: ReadonlyArray<string> | undefined
+      readonly adminPolicies: ReadonlyArray<string> | undefined
     }
     readonly opencode: {
       readonly provider: string | undefined
@@ -362,21 +370,21 @@ export interface AgentPoolMemberSettings {
   readonly kind: "claude" | "codex" | "gemini" | "opencode"
   readonly model: string | undefined
   readonly effort:
-    | "low"
-    | "medium"
-    | "high"
-    | "xhigh"
-    | "max"
-    | undefined
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | undefined
   readonly instructions: string | undefined
   readonly cwd: string | undefined
   readonly timeoutMs: number
   readonly maxOutputChars: number
   readonly permissionMode:
-    | "default"
-    | "acceptEdits"
-    | "bypassPermissions"
-    | undefined
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | undefined
   readonly allowedTools: ReadonlyArray<string> | undefined
   readonly disallowedTools: ReadonlyArray<string> | undefined
   readonly env: Record<string, string> | undefined
@@ -602,6 +610,10 @@ function resolveGeminiSettings(
       resolveEnv(gemini.executable) ??
       (kind === "gemini" ? (Bun.which("gemini") ?? undefined) : undefined),
     skillsPath: gemini.skills_path ?? DEFAULT_SKILLS_PATHS.gemini,
+    sandbox: gemini.sandbox,
+    skipTrust: gemini.skip_trust,
+    policies: gemini.policies,
+    adminPolicies: gemini.admin_policies,
   }
 }
 

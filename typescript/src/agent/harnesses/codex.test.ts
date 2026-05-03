@@ -260,6 +260,10 @@ function makeSettings(
         includeDirectories: undefined,
         executable: undefined,
         skillsPath: ".gemini/skills",
+        sandbox: undefined,
+        skipTrust: undefined,
+        policies: undefined,
+        adminPolicies: undefined,
       },
       opencode: {
         provider: undefined,

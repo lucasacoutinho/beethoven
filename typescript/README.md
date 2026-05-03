@@ -14,7 +14,7 @@ V1 supported harnesses (selected via `runtime.kind` in `WORKFLOW.md`):
 |---|---|---|
 | `claude` | [`@anthropic-ai/claude-agent-sdk`](https://docs.anthropic.com/en/api/agent-sdk) | Working |
 | `codex` | `codex app-server` JSON-RPC over stdio | Working |
-| `gemini` | Gemini CLI headless mode | Stub (experimental) |
+| `gemini` | Gemini CLI headless mode | Working |
 | `opencode` | `opencode run --format json` | Stub |
 
 It follows the layered spec at [`../SPEC.md`](../SPEC.md) — **Policy
@@ -134,6 +134,7 @@ agent_pool:
       effort: xhigh
       codex:
         sandbox_policy: workspaceWrite
+
     - id: codex-gpt-5.4-mini-accompanist
       role: accompanist
       capabilities: [ci-triage, branch-analysis, docs]
@@ -143,6 +144,7 @@ agent_pool:
       instructions: "Use for CI failure investigation and branch analysis."
       codex:
         sandbox_policy: readOnly
+
     - id: codex-gpt-5.4-soloist
       role: soloist
       capabilities: [implementation, review, risk-check]
@@ -152,10 +154,26 @@ agent_pool:
       instructions: "Use for independent design review before handoff."
       codex:
         sandbox_policy: readOnly
-  # gemini:
-  #   include_directories: []
-  # opencode:
-  #   provider: anthropic
+
+  #   - id: gemini-pro-soloist
+  #     role: soloist
+  #     capabilities: [implementation, review]
+  #     kind: gemini
+  #     model: gemini-1.5-pro
+  #     effort: high
+  #     gemini:
+  #       include_directories: []
+  #       sandbox: false
+  #       skip_trust: false
+  #       policies: []
+  #       admin_policies: []
+
+  #   - id: opencode-soloist
+  #     role: soloist
+  #     capabilities: [implementation]
+  #     kind: opencode
+  #     opencode:
+  #       provider: anthropic
 ```
 
 The Markdown body below the YAML is the per-issue prompt template (Liquid syntax,
