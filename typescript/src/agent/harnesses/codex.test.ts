@@ -63,6 +63,16 @@ for await (const chunk of Bun.stdin.stream()) {
             arguments: { query: "query Viewer { viewer { id } }" },
           },
         })
+      } else if (scenario === "rate-limit") {
+        write({
+          method: "codex/event/rate_limits",
+          params: {
+            rate_limits: {
+              limit_id: "codex-test",
+              primary: { remaining: 0, limit: 100, reset_in_seconds: 60 },
+            },
+          },
+        })
       } else {
         write({
           method: "thread/tokenUsage/updated",
@@ -100,9 +110,7 @@ describe("Codex harness", () => {
     })
 
     const threadStart = findRequest(requests, "thread/start")
-    expect(paramsOf(threadStart).approvalPolicy).toEqual({
-      reject: { sandbox_approval: true, rules: true, mcp_elicitations: true },
-    })
+    expect(paramsOf(threadStart).approvalPolicy).toBe("on-request")
     expect(paramsOf(threadStart).sandbox).toBe("workspace-write")
     expect(hasDynamicTool(threadStart, "linear_graphql")).toBe(true)
 
@@ -134,6 +142,17 @@ describe("Codex harness", () => {
     expect(events.some((event) => event._tag === "approval_requested")).toBe(true)
   }, 10_000)
 
+  test("maps legacy reject approval policy to current Codex string policy", async () => {
+    const { result, requests } = await runCodexScenario("basic", {
+      approvalPolicy: {
+        reject: { sandbox_approval: true, rules: true, mcp_elicitations: true },
+      },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(paramsOf(findRequest(requests, "thread/start")).approvalPolicy).toBe("on-request")
+  }, 10_000)
+
   test("executes Codex dynamic tool calls through the harness", async () => {
     const { result, requests, events } = await runCodexScenario("tool")
 
@@ -146,6 +165,15 @@ describe("Codex harness", () => {
       "Beethoven is missing Linear auth",
     )
     expect(events.some((event) => event._tag === "tool_result" && event.isError)).toBe(true)
+  }, 10_000)
+
+  test("stops the Codex turn when rate limits are exhausted", async () => {
+    const { result, events } = await runCodexScenario("rate-limit")
+
+    expect(result.status).toBe("errored")
+    expect(events.some((event) => event._tag === "rate_limits_updated" && event.rateLimits.status === "rejected")).toBe(true)
+    expect(events.some((event) => event._tag === "run_failed" && event.reason.includes("Codex rate limit exhausted"))).toBe(true)
+    expect(events.some((event) => event._tag === "raw" && event.kind === "turn/completed")).toBe(false)
   }, 10_000)
 })
 

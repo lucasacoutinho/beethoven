@@ -13,6 +13,8 @@ import {
   Schedule,
   Stream,
 } from "effect"
+import * as fs from "node:fs"
+import * as path from "node:path"
 
 import type { Settings } from "../config/schema.ts"
 import type { AgentPoolRole, HarnessKind } from "../agent/harness.ts"
@@ -80,6 +82,7 @@ type RunOutcome =
   | { kind: "issue_done"; finalState: string }
   | { kind: "issue_handed_off"; finalState: string }
   | { kind: "max_turns_reached" }
+  | { kind: "rate_limited"; reason: string; releaseForAlternate: boolean }
   | { kind: "agent_error" }
 
 export interface OrchestratorService {
@@ -120,6 +123,7 @@ interface State {
   readonly claimed: HashSet.HashSet<string>
   readonly completed: HashSet.HashSet<string>
   readonly retries: HashMap.HashMap<string, RetryEntry>
+  readonly pausedAgents: HashMap.HashMap<string, number>
   readonly tokensTotal: { input: number; output: number; total: number }
   readonly rateLimits: RateLimitSnapshot | null
   readonly dispatchPausedUntil: number | null
@@ -131,6 +135,7 @@ const initialState = (): State => ({
   claimed: HashSet.empty(),
   completed: HashSet.empty(),
   retries: HashMap.empty(),
+  pausedAgents: HashMap.empty(),
   tokensTotal: { input: 0, output: 0, total: 0 },
   rateLimits: null,
   dispatchPausedUntil: null,
@@ -211,11 +216,22 @@ export const OrchestratorLive = (
               ...linkResult,
             }),
           )
+          yield* Effect.logInfo("workspace_context_sizes").pipe(
+            Effect.annotateLogs({
+              issue_id: issue.id,
+              identifier: issue.identifier,
+              agent: issueAgent.id,
+              harness: issueHarness.kind,
+              ...workspaceContextSizes(ws.path, issueHarness.skillsPath),
+            }),
+          )
 
           const work = Effect.gen(function* () {
             yield* workspaces.runBeforeRun(ws, issue)
 
             let currentIssue = issue
+            let rateLimitedReason: string | null = null
+            let releaseForAlternate = false
             for (let turn = 1; turn <= settings.agent.maxTurns; turn++) {
               yield* Ref.update(state, (s) => ({
                 ...s,
@@ -232,6 +248,20 @@ export const OrchestratorLive = (
                 attempt: turn === 1 ? (attempt > 1 ? attempt : null) : turn,
                 agent: issueAgent,
               })
+              yield* Effect.logInfo("agent_prompt_built").pipe(
+                Effect.annotateLogs({
+                  issue_id: currentIssue.id,
+                  identifier: currentIssue.identifier,
+                  agent: issueAgent.id,
+                  harness: issueHarness.kind,
+                  model: issueAgent.model,
+                  turn,
+                  attempt,
+                  prompt_chars: prompt.length,
+                  issue_description_chars: currentIssue.description?.length ?? 0,
+                  issue_label_count: currentIssue.labels.length,
+                }),
+              )
               const delegateTask = makeAgentPoolDelegate(
                 settings,
                 ws,
@@ -250,6 +280,15 @@ export const OrchestratorLive = (
                       })),
                     }))
                   } else if (event._tag === "tool_call") {
+                    yield* Effect.logInfo("agent_tool_call_size").pipe(
+                      Effect.annotateLogs({
+                        issue_id: currentIssue.id,
+                        identifier: currentIssue.identifier,
+                        agent: issueAgent.id,
+                        tool: event.toolName,
+                        tool_input_chars: approxJsonChars(event.input),
+                      }),
+                    )
                     yield* Ref.update(state, (s) => ({
                       ...s,
                       running: HashMap.modify(s.running, currentIssue.id, (e) => ({
@@ -263,6 +302,17 @@ export const OrchestratorLive = (
                       identifier: currentIssue.identifier,
                       toolName: event.toolName,
                     })
+                  } else if (event._tag === "tool_result") {
+                    yield* Effect.logInfo("agent_tool_result_size").pipe(
+                      Effect.annotateLogs({
+                        issue_id: currentIssue.id,
+                        identifier: currentIssue.identifier,
+                        agent: issueAgent.id,
+                        tool_call_id: event.toolCallId,
+                        tool_result_chars: approxJsonChars(event.output),
+                        is_error: event.isError,
+                      }),
+                    )
                   } else if (event._tag === "text_delta") {
                     const preview =
                       event.text.length > 200
@@ -282,6 +332,20 @@ export const OrchestratorLive = (
                       preview,
                     })
                   } else if (event._tag === "tokens_updated") {
+                    yield* Effect.logInfo("agent_tokens_updated").pipe(
+                      Effect.annotateLogs({
+                        issue_id: currentIssue.id,
+                        identifier: currentIssue.identifier,
+                        agent: issueAgent.id,
+                        turn,
+                        input_delta: event.delta.inputTokens,
+                        output_delta: event.delta.outputTokens,
+                        total_delta: event.delta.totalTokens,
+                        input_total: event.cumulative.inputTokens,
+                        output_total: event.cumulative.outputTokens,
+                        total_tokens: event.cumulative.totalTokens,
+                      }),
+                    )
                     yield* Ref.update(state, (s) => ({
                       ...s,
                       running: HashMap.modify(s.running, currentIssue.id, (e) => ({
@@ -294,17 +358,48 @@ export const OrchestratorLive = (
                       })),
                     }))
                   } else if (event._tag === "rate_limits_updated") {
+                    if (event.rateLimits.status === "rejected") {
+                      const unavailableAgentIds = agentIdsPausedByRateLimit(
+                        settings,
+                        issueAgent,
+                      )
+                      releaseForAlternate = hasAlternateAgentForIssue(
+                        settings,
+                        currentIssue,
+                        issueAgent,
+                        unavailableAgentIds,
+                      )
+                      rateLimitedReason = rateLimitReleaseReason(
+                        event.rateLimits,
+                        releaseForAlternate,
+                      )
+                    }
                     yield* Ref.update(state, (s) => {
                       const pausedUntil = effectivePausedUntil(event.rateLimits)
+                      const effectivePauseUntil =
+                        event.rateLimits.status === "rejected"
+                          ? pausedUntil ?? Date.now() + settings.agent.maxRetryBackoffMs
+                          : pausedUntil
+                      const shouldPauseDispatch =
+                        event.rateLimits.status !== "rejected" || !releaseForAlternate
                       return {
                         ...s,
                         rateLimits: event.rateLimits,
+                        pausedAgents:
+                          event.rateLimits.status === "rejected" && effectivePauseUntil !== null
+                            ? pauseEquivalentAgents(
+                                s.pausedAgents,
+                                settings,
+                                issueAgent,
+                                effectivePauseUntil,
+                              )
+                            : s.pausedAgents,
                         dispatchPausedUntil:
                           event.rateLimits.status === "allowed"
                             ? null
-                            : pausedUntil === null
+                            : !shouldPauseDispatch || effectivePauseUntil === null
                               ? s.dispatchPausedUntil
-                              : Math.max(s.dispatchPausedUntil ?? 0, pausedUntil),
+                              : Math.max(s.dispatchPausedUntil ?? 0, effectivePauseUntil),
                       }
                     })
                     yield* Effect.logInfo("rate_limits_updated").pipe(
@@ -331,6 +426,13 @@ export const OrchestratorLive = (
                 .pipe(Effect.either)
 
               if (result._tag === "Left") {
+                if (rateLimitedReason !== null) {
+                  return {
+                    kind: "rate_limited",
+                    reason: rateLimitedReason,
+                    releaseForAlternate,
+                  } as RunOutcome
+                }
                 yield* Effect.logError("agent_run_errored").pipe(
                   Effect.annotateLogs({
                     issue_id: issue.id,
@@ -351,6 +453,13 @@ export const OrchestratorLive = (
               }))
 
               if (result.right.status !== "completed") {
+                if (rateLimitedReason !== null) {
+                  return {
+                    kind: "rate_limited",
+                    reason: rateLimitedReason,
+                    releaseForAlternate,
+                  } as RunOutcome
+                }
                 return { kind: "agent_error" } as RunOutcome
               }
 
@@ -385,7 +494,23 @@ export const OrchestratorLive = (
 
       const dispatch = (issue: Issue, attempt: number): Effect.Effect<void> =>
         Effect.gen(function* () {
-          const assignedMember = selectIssueAgentPoolMember(settings, issue)
+          const current = yield* Ref.get(state)
+          const assignedMember = selectIssueAgentPoolMember(
+            settings,
+            issue,
+            activePausedAgentIds(current),
+          )
+          if (hasConfiguredAgentPool(settings) && assignedMember === undefined) {
+            yield* Effect.logWarning("dispatch_deferred_no_available_agent").pipe(
+              Effect.annotateLogs({
+                issue_id: issue.id,
+                identifier: issue.identifier,
+                attempt,
+              }),
+            )
+            yield* scheduleRetry(issue, attempt)
+            return
+          }
           const assignedAgent = agentInfoForSettings(
             assignedMember ? settingsForTopLevelPoolMember(settings, assignedMember) : settings,
             assignedMember,
@@ -416,7 +541,10 @@ export const OrchestratorLive = (
               yield* Ref.update(state, (s) => ({
                 ...s,
                 running: HashMap.remove(s.running, issue.id),
-                claimed: HashSet.remove(s.claimed, issue.id),
+                claimed:
+                  outcome.kind === "rate_limited" && !outcome.releaseForAlternate
+                    ? s.claimed
+                    : HashSet.remove(s.claimed, issue.id),
                 completed: trulyCompleted
                   ? HashSet.add(s.completed, issue.id)
                   : s.completed,
@@ -442,6 +570,36 @@ export const OrchestratorLive = (
                   identifier: issue.identifier,
                   turns: settings.agent.maxTurns,
                 })
+              } else if (outcome.kind === "rate_limited" && outcome.releaseForAlternate) {
+                yield* Effect.logWarning("agent_rate_limited_released").pipe(
+                  Effect.annotateLogs({
+                    issue_id: issue.id,
+                    identifier: issue.identifier,
+                    agent: assignedAgent.id,
+                    reason: outcome.reason,
+                  }),
+                )
+                yield* PubSub.publish(events, {
+                  _tag: "failed",
+                  issueId: issue.id,
+                  identifier: issue.identifier,
+                  reason: outcome.reason,
+                })
+              } else if (outcome.kind === "rate_limited") {
+                yield* Effect.logWarning("agent_rate_limited_waiting").pipe(
+                  Effect.annotateLogs({
+                    issue_id: issue.id,
+                    identifier: issue.identifier,
+                    agent: assignedAgent.id,
+                    reason: outcome.reason,
+                  }),
+                )
+                yield* PubSub.publish(events, {
+                  _tag: "failed",
+                  issueId: issue.id,
+                  identifier: issue.identifier,
+                  reason: outcome.reason,
+                })
               } else {
                 yield* PubSub.publish(events, {
                   _tag: "failed",
@@ -453,8 +611,13 @@ export const OrchestratorLive = (
 
               // max_turns and handed_off are "not done yet" signals — the issue
               // is either still active or waiting on a human. The next poll
-              // tick handles both naturally. Only retry on genuine agent errors.
-              if (outcome.kind === "agent_error" && !interrupted) {
+              // tick handles both naturally. Retry only when this agent should
+              // resume later instead of releasing the issue for another model.
+              if (
+                (outcome.kind === "agent_error" ||
+                  (outcome.kind === "rate_limited" && !outcome.releaseForAlternate)) &&
+                !interrupted
+              ) {
                 yield* scheduleRetry(issue, attempt + 1)
               }
             })
@@ -516,6 +679,7 @@ export const OrchestratorLive = (
 
           yield* Ref.update(state, (s) => ({
             ...s,
+            claimed: HashSet.add(s.claimed, issue.id),
             retries: HashMap.set(s.retries, issue.id, {
               issue,
               attempt,
@@ -577,9 +741,21 @@ export const OrchestratorLive = (
         yield* Ref.update(state, (s) => ({ ...s, lastTickAt: Date.now() }))
         yield* PubSub.publish(events, { _tag: "tick", candidates: candidates.length })
 
-        for (const issue of sortForDispatch(candidates)) {
+        for (const issue of sortForDispatch(candidates, settings.tracker.activeStates)) {
           const updated = yield* Ref.get(state)
-          if (canDispatch(issue, updated)) yield* dispatch(issue, 1)
+          if (!canDispatch(issue, updated)) continue
+          if (
+            hasConfiguredAgentPool(settings) &&
+            selectIssueAgentPoolMember(
+              settings,
+              issue,
+              activePausedAgentIds(updated),
+            ) === undefined
+          ) {
+            yield* scheduleRetry(issue, 1)
+            continue
+          }
+          yield* dispatch(issue, 1)
         }
 
         yield* reconcileTerminal
@@ -636,8 +812,17 @@ export const OrchestratorLive = (
     }),
   )
 
-function sortForDispatch(issues: ReadonlyArray<Issue>): ReadonlyArray<Issue> {
+function sortForDispatch(
+  issues: ReadonlyArray<Issue>,
+  activeStates: ReadonlyArray<string>,
+): ReadonlyArray<Issue> {
+  const stateRank = new Map(
+    activeStates.map((state, index) => [normalizeState(state), index]),
+  )
   return [...issues].sort((a, b) => {
+    const ar = stateRank.get(normalizeState(a.state)) ?? -1
+    const br = stateRank.get(normalizeState(b.state)) ?? -1
+    if (ar !== br) return br - ar
     const ap = a.priority ?? Number.POSITIVE_INFINITY
     const bp = b.priority ?? Number.POSITIVE_INFINITY
     if (ap !== bp) return ap - bp
@@ -663,19 +848,21 @@ function agentInfoForSettings(
 function selectIssueAgentPoolMember(
   settings: Settings,
   issue: Issue,
+  unavailableAgentIds: ReadonlySet<string> = new Set(),
 ): Settings["agentPool"]["members"][number] | undefined {
   if (
     normalizeState(issue.state) ===
     normalizeState(settings.agentPool.aiReviewState)
   ) {
-    return selectAiReviewMember(settings)
+    return selectAiReviewMember(settings, unavailableAgentIds)
   }
 
-  return selectPrimaryMember(settings)
+  return selectPrimaryMember(settings, unavailableAgentIds)
 }
 
 function selectPrimaryMember(
   settings: Settings,
+  unavailableAgentIds: ReadonlySet<string> = new Set(),
 ): Settings["agentPool"]["members"][number] | undefined {
   const weighted = settings.agentPool.primaryCandidates
     .map((entry) => ({
@@ -688,15 +875,30 @@ function selectPrimaryMember(
         readonly weight: number
       } => entry.member !== undefined && entry.weight > 0,
     )
+    .filter((entry) => !unavailableAgentIds.has(entry.member.id))
 
   if (weighted.length > 0) {
     return weightedRandom(weighted)
   }
 
+  if (settings.agentPool.primaryCandidates.length > 0) {
+    return undefined
+  }
+
   if (settings.agentPool.primaryAgent) {
-    return settings.agentPool.members.find(
+    const primary = settings.agentPool.members.find(
       (candidate) => candidate.id === settings.agentPool.primaryAgent,
     )
+    if (primary && !unavailableAgentIds.has(primary.id)) return primary
+  }
+
+  const fallback = settings.agentPool.members.find(
+    (candidate) =>
+      settings.agentPool.primaryFallbackRoles.includes(candidate.role) &&
+      !unavailableAgentIds.has(candidate.id),
+  )
+  if (fallback) {
+    return fallback
   }
 
   return undefined
@@ -704,16 +906,19 @@ function selectPrimaryMember(
 
 function selectAiReviewMember(
   settings: Settings,
+  unavailableAgentIds: ReadonlySet<string> = new Set(),
 ): Settings["agentPool"]["members"][number] | undefined {
   const primary = selectPrimaryReferenceMember(settings)
   const requestedCapabilities = settings.agentPool.aiReviewCapabilities
-  const reviewers = settings.agentPool.members.filter((candidate) =>
-    requestedCapabilities.every((capability) =>
-      candidate.capabilities.includes(capability),
-    ),
+  const reviewers = settings.agentPool.members.filter(
+    (candidate) =>
+      !unavailableAgentIds.has(candidate.id) &&
+      requestedCapabilities.every((capability) =>
+        candidate.capabilities.includes(capability),
+      ),
   )
 
-  if (reviewers.length === 0) return selectPrimaryMember(settings)
+  if (reviewers.length === 0) return selectPrimaryMember(settings, unavailableAgentIds)
 
   const notPrimary = primary
     ? reviewers.filter((candidate) => candidate.id !== primary.id)
@@ -769,6 +974,87 @@ function weightedRandom(
 
 function randomMember<T>(members: ReadonlyArray<T>): T {
   return members[Math.floor(Math.random() * members.length)]!
+}
+
+function activePausedAgentIds(state: State): ReadonlySet<string> {
+  const now = Date.now()
+  return new Set(
+    HashMap.toEntries(state.pausedAgents)
+      .filter(([, pausedUntil]) => pausedUntil > now)
+      .map(([agentId]) => agentId),
+  )
+}
+
+function agentIdsPausedByRateLimit(
+  settings: Settings,
+  currentAgent: RunningAgentInfo,
+): ReadonlySet<string> {
+  const ids = new Set<string>([currentAgent.id])
+
+  for (const member of settings.agentPool.members) {
+    const memberInfo = agentInfoForSettings(
+      settingsForTopLevelPoolMember(settings, member),
+      member,
+    )
+    if (
+      memberInfo.kind === currentAgent.kind &&
+      memberInfo.model === currentAgent.model
+    ) {
+      ids.add(memberInfo.id)
+    }
+  }
+
+  return ids
+}
+
+function pauseEquivalentAgents(
+  pausedAgents: HashMap.HashMap<string, number>,
+  settings: Settings,
+  currentAgent: RunningAgentInfo,
+  pausedUntil: number,
+): HashMap.HashMap<string, number> {
+  let next = HashMap.set(pausedAgents, currentAgent.id, pausedUntil)
+
+  for (const member of settings.agentPool.members) {
+    const memberInfo = agentInfoForSettings(
+      settingsForTopLevelPoolMember(settings, member),
+      member,
+    )
+    if (
+      memberInfo.kind === currentAgent.kind &&
+      memberInfo.model === currentAgent.model
+    ) {
+      next = HashMap.set(next, memberInfo.id, pausedUntil)
+    }
+  }
+
+  return next
+}
+
+function hasAlternateAgentForIssue(
+  settings: Settings,
+  issue: Issue,
+  currentAgent: RunningAgentInfo,
+  unavailableAgentIds: ReadonlySet<string> = new Set(),
+): boolean {
+  if (settings.agentPool.onPrimaryUnavailable !== "reassign") return false
+
+  const member = selectIssueAgentPoolMember(settings, issue, unavailableAgentIds)
+  if (member === undefined) return false
+
+  const alternateInfo = agentInfoForSettings(
+    settingsForTopLevelPoolMember(settings, member),
+    member,
+  )
+  return (
+    alternateInfo.id !== currentAgent.id &&
+    (alternateInfo.kind !== currentAgent.kind ||
+      alternateInfo.model !== currentAgent.model)
+  )
+}
+
+function hasConfiguredAgentPool(settings: Settings): boolean {
+  return settings.agentPool.members.length > 0
 }
 
 function makeAgentPoolDelegate(
@@ -888,6 +1174,7 @@ function buildDelegatedAgentPrompt(
     "You are a Beethoven delegated agent handling a substantial work package.",
     "",
     "You are not the primary owner for this Linear issue. Do not commit, push, merge, create PRs, edit tracker state, or make durable file changes unless the task explicitly asks for a patch. Prefer read-only investigation and concise advice.",
+    "Do not add filler comments that restate identifiers, branches, function names, types, or obvious control flow. Add comments only for non-obvious domain invariants, safety/security constraints, concurrency concerns, migration rationale, or cross-module contracts.",
     "",
     `Agent: ${member.id}`,
     `Role: ${member.role}`,
@@ -922,6 +1209,105 @@ function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(0, maxChars) + "\n[truncated]" : value
 }
 
+function approxJsonChars(value: unknown): number {
+  if (value === null || value === undefined) return 0
+  if (typeof value === "string") return value.length
+  try {
+    return JSON.stringify(value).length
+  } catch {
+    return String(value).length
+  }
+}
+
+function workspaceContextSizes(
+  workspaceRoot: string,
+  harnessSkillsPath: string,
+): Record<string, number | string> {
+  const agentsSkills = scanWorkspacePath(workspaceRoot, ".agents/skills")
+  const harnessSkills = scanWorkspacePath(workspaceRoot, harnessSkillsPath)
+  const remember = scanWorkspacePath(workspaceRoot, ".remember")
+  const beaconSkills = scanWorkspacePath(workspaceRoot, ".beacon-skills")
+  const rootReadme = scanWorkspacePath(workspaceRoot, "README.md")
+  return {
+    agents_skills_bytes: agentsSkills.bytes,
+    agents_skills_files: agentsSkills.files,
+    agents_skills_dirs: agentsSkills.dirs,
+    harness_skills_path: harnessSkillsPath,
+    harness_skills_bytes: harnessSkills.bytes,
+    harness_skills_files: harnessSkills.files,
+    harness_skills_dirs: harnessSkills.dirs,
+    harness_skills_symlink: harnessSkills.symlink ? 1 : 0,
+    remember_bytes: remember.bytes,
+    remember_files: remember.files,
+    remember_dirs: remember.dirs,
+    beacon_skills_bytes: beaconSkills.bytes,
+    beacon_skills_files: beaconSkills.files,
+    beacon_skills_dirs: beaconSkills.dirs,
+    root_readme_bytes: rootReadme.bytes,
+  }
+}
+
+interface PathScan {
+  readonly bytes: number
+  readonly files: number
+  readonly dirs: number
+  readonly symlink: boolean
+}
+
+function scanWorkspacePath(workspaceRoot: string, relativePath: string): PathScan {
+  const target = path.resolve(workspaceRoot, relativePath)
+  try {
+    return scanPath(target)
+  } catch {
+    return { bytes: 0, files: 0, dirs: 0, symlink: false }
+  }
+}
+
+function scanPath(target: string): PathScan {
+  const stat = fs.lstatSync(target)
+  if (stat.isSymbolicLink()) {
+    return { bytes: stat.size, files: 0, dirs: 0, symlink: true }
+  }
+  if (stat.isFile()) {
+    return { bytes: stat.size, files: 1, dirs: 0, symlink: false }
+  }
+  if (!stat.isDirectory()) {
+    return { bytes: stat.size, files: 0, dirs: 0, symlink: false }
+  }
+
+  let bytes = stat.size
+  let files = 0
+  let dirs = 1
+  const stack = [target]
+  while (stack.length > 0) {
+    const dir = stack.pop()!
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const child = path.join(dir, entry)
+      let childStat: fs.Stats
+      try {
+        childStat = fs.lstatSync(child)
+      } catch {
+        continue
+      }
+      bytes += childStat.size
+      if (childStat.isSymbolicLink()) continue
+      if (childStat.isDirectory()) {
+        dirs++
+        stack.push(child)
+      } else if (childStat.isFile()) {
+        files++
+      }
+    }
+  }
+  return { bytes, files, dirs, symlink: false }
+}
+
 // AWS-classic decorrelated jitter: prev = min(cap, randomBetween(base, prev * 3)).
 // Bounded growth per step keeps operator dashboards readable while still
 // decorrelating concurrent retries.
@@ -952,3 +1338,26 @@ function effectivePausedUntil(rateLimits: RateLimitSnapshot): number | null {
   const resetAt = rateLimits.primary?.resetAt ?? rateLimits.secondary?.resetAt
   return resetAt !== undefined && resetAt > Date.now() ? resetAt : null
 }
+
+function rateLimitReleaseReason(
+  rateLimits: RateLimitSnapshot,
+  releaseForAlternate: boolean,
+): string {
+  const resetAt = effectivePausedUntil(rateLimits)
+  const resetSuffix =
+    resetAt === null
+      ? ""
+      : ` until ${new Date(resetAt).toISOString()}`
+  const detail = rateLimits.reason ? `: ${rateLimits.reason}` : ""
+  const action = releaseForAlternate
+    ? "released issue for another harness/model"
+    : "waiting for rate limit reset"
+  return `agent rate limit exhausted for ${rateLimits.harness}/${rateLimits.limitId}${resetSuffix}; ${action}${detail}`
+}
+
+export const __testing = {
+  agentIdsPausedByRateLimit,
+  hasAlternateAgentForIssue,
+  selectIssueAgentPoolMember,
+  sortForDispatch,
+} as const

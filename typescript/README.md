@@ -116,7 +116,7 @@ runtime:
   codex:
     # command can be omitted; Beethoven injects runtime.model and runtime.effort
     # into the default `codex app-server` command via Codex config overrides.
-    approval_policy: onRequest      # never | unlessTrusted | onRequest | Codex policy object
+    approval_policy: on-request     # never | on-failure | on-request | granular
     auto_approve_requests: false
     thread_sandbox: workspace-write
     sandbox_policy: workspaceWrite  # readOnly | workspaceWrite | dangerFullAccess | externalSandbox

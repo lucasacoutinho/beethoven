@@ -162,6 +162,14 @@ export const makeClaudeHarness = (settings: Settings): Harness => {
             const rateLimits = extractRateLimits(message)
             if (rateLimits) {
               await emit.single({ _tag: "rate_limits_updated", rateLimits })
+              if (rateLimits.status === "rejected") {
+                await emit.single({
+                  _tag: "run_failed",
+                  reason: rateLimitFailureReason(rateLimits),
+                })
+                await emit.end()
+                return
+              }
             }
 
             if (tag === "system" && m.subtype === "api_retry") {
@@ -222,6 +230,25 @@ export const makeClaudeHarness = (settings: Settings): Harness => {
 
   const run: Harness["run"] = (input, onEvent) =>
     Effect.gen(function* () {
+      const options = buildOptions(input)
+      yield* Effect.logInfo("claude_run_context").pipe(
+        Effect.annotateLogs({
+          issue_id: input.issue.id,
+          identifier: input.issue.identifier,
+          turn: input.turnNumber,
+          model: common.model ?? null,
+          prompt_chars: input.prompt.length,
+          cwd: typeof options.cwd === "string" ? options.cwd : null,
+          mcp_server_count: options.mcpServers
+            ? Object.keys(options.mcpServers).length
+            : 0,
+          allowed_tool_count: options.allowedTools?.length ?? 0,
+          disallowed_tool_count: options.disallowedTools?.length ?? 0,
+          env_count: options.env ? Object.keys(options.env).length : 0,
+          has_resume_session: input.resumeSessionId ? 1 : 0,
+          has_delegate_task: input.delegateTask ? 1 : 0,
+        }),
+      )
       const stateRef = yield* Ref.make<AgentRunResult>({
         status: "completed",
         sessionId: null,
@@ -438,6 +465,13 @@ function classifyLimitText(text: string): RateLimitSnapshot | null {
     pausedUntil,
     reason: text.length > 300 ? text.slice(0, 300) + "..." : text,
   }
+}
+
+function rateLimitFailureReason(rateLimits: RateLimitSnapshot): string {
+  const resetAt = rateLimits.primary?.resetAt ?? rateLimits.secondary?.resetAt
+  const resetSuffix =
+    resetAt === undefined ? "" : ` until ${new Date(resetAt).toISOString()}`
+  return `Claude rate limit exhausted for ${rateLimits.limitId}${resetSuffix}`
 }
 
 function buildBucket(input: {

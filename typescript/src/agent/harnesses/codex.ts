@@ -350,6 +350,13 @@ async function readTurn(
     const rateLimits = extractRateLimits(message)
     if (rateLimits) {
       await emit.single({ _tag: "rate_limits_updated", rateLimits })
+      if (rateLimits.status === "rejected") {
+        await emit.single({
+          _tag: "run_failed",
+          reason: rateLimitFailureReason(rateLimits),
+        })
+        return
+      }
     }
 
     const usage = extractTokenUsage(message)
@@ -722,12 +729,22 @@ function mergeEvent(prev: AgentRunResult, event: AgentEvent): AgentRunResult {
 function toCodexApprovalPolicy(settings: Settings): unknown {
   const policy = settings.runtime.codex.approvalPolicy
   if (policy === undefined) {
-    return { reject: { sandbox_approval: true, rules: true, mcp_elicitations: true } }
+    return "on-request"
   }
+  if (isLegacyRejectPolicy(policy)) return "on-request"
   if (typeof policy === "object") return policy
   if (policy === "onRequest") return "on-request"
   if (policy === "unlessTrusted") return "unless-trusted"
   return policy
+}
+
+function isLegacyRejectPolicy(policy: unknown): boolean {
+  return Boolean(
+    policy &&
+      typeof policy === "object" &&
+      "reject" in policy &&
+      Object.keys(policy).length === 1,
+  )
 }
 
 function toCodexSandboxPolicy(settings: Settings, cwd: string): unknown {
@@ -819,10 +836,15 @@ function rateLimitBucket(bucket: Record<string, unknown>): RateLimitBucket | nul
   const remaining = numberFromKeys(bucket, ["remaining"])
   const limit = numberFromKeys(bucket, ["limit"])
   const resetInSeconds = numberFromKeys(bucket, ["reset_in_seconds", "resetInSeconds"])
+  const resetAt =
+    resetInSeconds === undefined
+      ? numberFromKeys(bucket, ["reset_at", "resetAt"])
+      : Date.now() + Math.max(0, resetInSeconds) * 1000
   const result: RateLimitBucket = {
     ...(remaining !== undefined ? { remaining } : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(resetInSeconds !== undefined ? { resetInSeconds } : {}),
+    ...(resetAt !== undefined ? { resetAt } : {}),
   }
   return Object.keys(result).length > 0 ? result : null
 }
@@ -851,6 +873,13 @@ function limitStatus(
   const secondaryRemaining = secondary ? numberFromKeys(secondary, ["remaining"]) : undefined
   if (primaryRemaining === 0 || secondaryRemaining === 0) return "rejected"
   return "allowed"
+}
+
+function rateLimitFailureReason(rateLimits: RateLimitSnapshot): string {
+  const resetAt = rateLimits.primary?.resetAt ?? rateLimits.secondary?.resetAt
+  const resetSuffix =
+    resetAt === undefined ? "" : ` until ${new Date(resetAt).toISOString()}`
+  return `Codex rate limit exhausted for ${rateLimits.limitId}${resetSuffix}`
 }
 
 function needsInput(method: string | undefined, message: JsonRpcMessage): boolean {

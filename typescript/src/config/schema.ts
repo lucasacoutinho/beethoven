@@ -166,7 +166,7 @@ const AgentPoolSchema = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         id: Schema.String,
-        weight: Schema.optionalWith(Schema.Number.pipe(Schema.positive()), {
+        weight: Schema.optionalWith(Schema.Number.pipe(Schema.nonNegative()), {
           default: () => 1,
         }),
       }),

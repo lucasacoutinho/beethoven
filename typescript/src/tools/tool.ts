@@ -37,14 +37,17 @@ export interface ToolImplementation {
   ) => Promise<ToolExecutionResult>
 }
 
+const MAX_TOOL_OUTPUT_CHARS = 8_000
+
 export function toolResponse(
   success: boolean,
   output: string,
 ): ToolExecutionResult {
+  const cappedOutput = capToolOutput(output)
   return {
     success,
-    output,
-    contentItems: [{ type: "inputText", text: output }],
+    output: cappedOutput,
+    contentItems: [{ type: "inputText", text: cappedOutput }],
   }
 }
 
@@ -59,4 +62,9 @@ export function encodeToolPayload(payload: unknown): string {
   } catch {
     return String(payload)
   }
+}
+
+function capToolOutput(output: string): string {
+  if (output.length <= MAX_TOOL_OUTPUT_CHARS) return output
+  return `${output.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n[truncated ${output.length - MAX_TOOL_OUTPUT_CHARS} chars by Beethoven tool output cap]`
 }
